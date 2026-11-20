@@ -14,7 +14,9 @@ your own language into English prompts. The interface is available in **English,
   of crashing (designed to run on a 4 GB GPU with 32 GB RAM).
 - **Face & hand fixer:** finds faces and hands (YuNet, MediaPipe palm, anime faces) and redraws them sharper.
 - **Prompt writer:** a local Ollama model (Qwen3 etc.) writes the English prompt and settings, then unloads itself so
-  the image model gets the VRAM. Ollama on another PC in your LAN can be used too.
+  the image model gets the VRAM. Ollama on another PC in your LAN can be used too. It translates faithfully — it keeps
+  nationality, count, colors and clothing, adds nothing you didn't say, and a short request gives a short prompt. The
+  program checks the result: a swapped or invented nationality is corrected, and over-long prompts are cleaned up.
 - **Training window:**
   - Build datasets from folders, files and **videos** (sharp, varied frames are picked automatically) or, if you allow
     it, from openly licensed images (Openverse). Files are named after the dataset (`istanbul_street_0001.jpg`).

@@ -1,8 +1,19 @@
-# 🎨 AI Local Image Studio v1.4.0
+# 🎨 AI Local Image Studio v1.4.1
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.1'de yeni — yapay zeka yazdığına sadık kalır
+
+- Prompt'u hazırlayan yapay zeka (LLM) artık yazdığını aynen çevirir: kişi, sayı, renk, kıyafet, yaş, milliyet / köken ve yer aynı anlamda kalır. Söylemediğin yer, eşya, hikâye, kültür ya da milliyet eklemez.
+- **Kısa istek → kısa prompt:** kelime sınırı yazdığın kelime sayısına göre ayarlanır (3 kelimeye en fazla ~20 kelime, uzun bir tarife ~60–90 kelime).
+- Program yapay zekanın yazdığını ayrıca kendisi denetler:
+  - "asyalı bir kadın" yazdın ve YZ "Turkish woman" dediyse "Asian woman" olarak düzeltilir. İstemediğin bir milliyet eklendiyse çıkarılır, istediğin atlandıysa geri eklenir. Türkçe, İngilizce, Almanca ve Korece yazılan ~30 milliyet / köken tanınır. "Japon bahçesi" gibi kişi olmayan kullanımlara dokunulmaz.
+  - YZ kısa isteğe uzun yazarsa eklediği ayrıntıları aynı YZ'ye bir kez daha sildirir. Bu da olmazsa ana konu başta kalacak şekilde kısaltılır.
+  - Her düzeltme log'da 🛠 / 🧹 / ✂ işaretiyle yazar.
+- "Özel Talimat" alanına yazdığın milliyet de geçerli sayılır (ör. "asyalı olsun").
+- Son prompt'u yine de görüp düzeltmek istersen: "👁️ Üretmeden önce prompt'u göster".
 
 ## v1.4.0'da yeni — görsel modelleri ve LoRA'lar ağda
 
@@ -336,6 +347,10 @@ D:\AI Local Image Studio\
     - Diğer PC'de "Görsel motoru → ➕ Ağdaki bir sunucuyu ekle…" → adres + anahtar. Model listesinde 🌐 modeller görünmeli; o PC'ye hiçbir şey indirilmemeli.
     - O PC'deki bir LoRA'yı seçip üretin: log'da "📤 … gönderiliyor (yalnızca bir kez)" bir kez yazmalı, görseller o PC'nin çıktı klasörüne kaydedilmeli. Sunucuda LoRA `addons\network\` içinde olmalı.
     - Üretim sırasında Durdur → sunucudaki iş de durmalı. Yanlış anahtarla bağlanma reddedilmeli.
+23. **v1.4.1 — YZ sadakati:** "Prompt'u yapay zeka hazırlasın" açık, "👁️ Üretmeden önce prompt'u göster" açık.
+    - "asyalı bir kadın" → prompt'ta "Asian woman" olmalı, başka milliyet ya da sizin yazmadığınız yer / eşya olmamalı, ~20 kelimeyi geçmemeli.
+    - "bir kadın" → prompt'ta hiçbir milliyet olmamalı.
+    - Log'da 🛠 / 🧹 / ✂ satırı çıktıysa YZ yanlış yazmış ve program düzeltmiş demektir; o satırları gönderin.
 
 Sorun çıkarsa veri klasöründeki `logs\ails.log` (ilk kurulumda `logs\setup.log`) dosyasını gönderin.
 
