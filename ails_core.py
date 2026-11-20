@@ -616,6 +616,7 @@ def free_gpu_memory():
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
+            release_pinned_cache()
     except Exception:
         pass
 
@@ -5785,9 +5786,11 @@ class ParamSwapper:
                 walk(c)
 
         walk(model)
-        if pin:       # sabitlenmiş (pinned) bellek hızlıdır ama Windows'ta çok büyüğü sistemi sıkıştırır
+        if pin:
+            # Sabitlenmiş (pinned) bellek kopyayı hızlandırır ama Windows onu diske yazamaz; büyükse Windows diğer
+            # her şeyi sayfa dosyasına iter. Bu yüzden yalnızca RAM'in küçük bir payıysa kullanılır.
             total = sum(sum(p.numel() * p.element_size() for p in ps) for _m, ps in units)
-            pin = (total - budget_bytes) < ram_total_gb() * GB * 0.35
+            pin = (total - budget_bytes) < ram_total_gb() * GB * 0.20
         for b in model.buffers():
             b.data = b.data.to(self.device)
         for p in model.parameters():
@@ -5844,6 +5847,21 @@ class ParamSwapper:
         self.units = []
         if to is not None:
             self.model.to(to)
+        gc.collect()
+        release_pinned_cache()
+
+
+def release_pinned_cache():
+    """PyTorch'un önbellekte tuttuğu sabitlenmiş RAM bloklarını Windows'a geri verir."""
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return
+    for fn in ("_host_emptyCache", "_accelerator_emptyHostCache"):
+        try:
+            getattr(torch._C, fn)()
+            return
+        except Exception:
+            continue
 
 
 def gpu_free_bytes(device):
@@ -6254,7 +6272,8 @@ class FlowLoraTrainer(LoraTrainer):
         if need + int(1.0 * GB) <= free:
             self.text_encoder.to(self.device)
             return None
-        return ParamSwapper(self.text_encoder, self.device, max(0, free - int(1.5 * GB)))
+        # metin kodlayıcı yalnızca bir kez, kısa süre çalışır: sabitlenmiş bellek kullanılmaz (RAM'i kilitlemesin)
+        return ParamSwapper(self.text_encoder, self.device, max(0, free - int(1.5 * GB)), pin=False)
 
     def _te_off(self, sw):
         if sw is not None:
