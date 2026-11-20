@@ -4,6 +4,30 @@
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
 
+## v1.3.1'de yeni — görsel modelleri ve LoRA'lar ağda
+
+LLM gibi görsel modelleri ve LoRA'lar da artık ağda paylaşılabilir. İki yön de var:
+
+**1) Bu bilgisayar sunucu olsun** (4. bölüm → **🌐 Ağ sunucusu…**, varsayılan kapalı)
+- **Yalnızca bu bilgisayar** (127.0.0.1, anahtarsız: bu PC'deki uygulamalar için; tarayıcıdaki web sayfalarından gelen istekler reddedilir) ya da **Ev / ofis ağım** (yalnızca 192.168.x / 10.x / 172.16–31.x adresleri, erişim anahtarı gerekir; Docker'da çalışan uygulamalar, ör. Open WebUI, için de bunu seçin).
+- Port varsayılan **7860**. Anahtar "Yeni anahtar" ile değiştirilir, "Kopyala" ile alınır. Pencerede bağlanılacak adres yazar (ör. `http://192.168.1.20:7860`).
+- Üretim bu bilgisayarın modelleri, ayarları, Bellek Koruyucusu ve LoRA'larıyla yapılır. İstekler sırayla işlenir; bilgisayar meşgulse (ör. eğitim) sırada bekler, iş yarıda kesilmez.
+- Görseller sunucuda da `outputs\network\` klasörüne kaydedilir.
+- **Diğer cihazlardan gönderilen LoRA'lar** (kapatılabilir): yalnızca geçerli `.safetensors` LoRA'lar kabul edilir, tam modeller reddedilir, sağlama toplamı kontrol edilir, en fazla 2 GB. `addons\network\` klasörüne kaydedilir; aynı LoRA ikinci kez gönderilmez.
+- Windows ilk açılışta güvenlik duvarı izni sorar: yalnızca **Özel ağlar** işaretli olsun. Portu internete (modem port yönlendirme) asla açmayın.
+
+**2) Bu program başka bilgisayarın sunucusunu kullansın** (4. bölüm → **Görsel motoru → ➕ Ağdaki bir sunucuyu ekle…**)
+- Adres (`192.168.1.20:7860`) ve anahtar yazılır; seçim hatırlanır ve açılışta yeniden bağlanılır.
+- Görsel modeli listesinde sunucunun kurulu modelleri **🌐** ile görünür. Bu bilgisayara model ya da motor indirilmez, hiçbir şey yüklenmez; zayıf bir dizüstü bile kullanabilir.
+- Prompt yine bu bilgisayarın LLM'iyle hazırlanır (ya da ağdaki Ollama ile). LoRA / Kart seçiminde hem bu bilgisayarın hem sunucunun LoRA'ları görünür (sunucudakiler **🌐 ağdaki**). Buradaki bir LoRA seçilirse sunucuya **bir kez** gönderilir.
+- Üretilen görseller bu bilgisayarın çıktı klasörüne kaydedilir (bilgilerinde hangi sunucuda üretildiği yazar). **Durdur** sunucudaki işi de durdurur.
+- "Bu bilgisayar"a geri dönülünce her şey eskisi gibi yerelde çalışır.
+
+**Diğer uygulamalar** (Open WebUI, SillyTavern, Krita eklentileri…) da bağlanabilir:
+- **Automatic1111 uyumlu API:** `/sdapi/v1/txt2img`, `/sdapi/v1/sd-models`, `/sdapi/v1/loras`, `/sdapi/v1/progress`, `/sdapi/v1/interrupt`. LoRA prompt içinde `<lora:ad:0.8>` yazımıyla seçilir.
+- **OpenAI görsel API'si:** `/v1/images/generations` ve `/v1/models`.
+- Anahtar `Authorization: Bearer <anahtar>` olarak ya da parola olarak (kullanıcı adı fark etmez) verilir.
+
 ## v1.3.1'de yeni — kolaj / bölünmüş ekran kontrolü
 
 - Tek görselde birden fazla kare olan görseller (kolajlar, yan yana ya da üst üste bölünmüş ekranlar, bölünmüş ekranlı videolardan çıkan kareler) eğitimi bozar: model bu düzeni de öğrenir ve görselleri bölmeli çizer.
@@ -213,6 +237,8 @@ D:\AI Local Image Studio\
 - v1.0.0'ın C:'ye bıraktığı bozuk PyTorch ve pip önbelleği bulunursa program bir kez silmeyi teklif eder.
 
 ## Ağdaki Ollama (4. bölüm → LLM sunucusu)
+
+> Görsel modelleri ve LoRA'ları ağda paylaşmak için yukarıdaki **"görsel modelleri ve LoRA'lar ağda"** bölümüne bakın.
 
 - Seçenekler: **Bu bilgisayar**, **ağda bulunan bilgisayarlar** veya **elle IP**. Seçim hatırlanır.
 - LLM başka bilgisayarda çalışınca bu PC'nin VRAM'inin tamamı görsel modeline kalır.

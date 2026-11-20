@@ -34,6 +34,7 @@ import subprocess
 import importlib
 import importlib.util
 import ipaddress
+import hashlib
 import warnings
 
 # Kütüphanelerin kullanıcıyı ilgilendirmeyen "ileride kaldırılacak" uyarıları log'u kirletmesin.
@@ -2308,6 +2309,696 @@ def discover_lan_ollama(known=(), limit=10, delay=0.3, abort_event=None, probe=p
         if ver:
             found.append((host, ver))
     return found
+
+
+# =============================================================================
+# Ağ: görsel sunucusu (bu bilgisayarın modelleri ve LoRA'ları ağdan kullanılır) ve istemcisi
+# Sunucu Ollama gibi çalışır: yalnızca kullanıcı açarsa dinler. "Yalnızca bu bilgisayar" (127.0.0.1) ya da
+# "ev/ofis ağı" seçilebilir; ağ modunda erişim anahtarı zorunludur. İnternete hiçbir şey açılmaz (yönlendirme
+# yapılmaz, yalnızca yerel ağ adresleri kabul edilir). Uyumlu uç noktalar:
+#   /api/*            — programın kendi istemcisi (iş kuyruğu, ilerleme, durdurma, LoRA paylaşımı)
+#   /sdapi/v1/*       — Automatic1111 uyumlu (SillyTavern, Open WebUI, Krita eklentileri…)
+#   /v1/images/*      — OpenAI uyumlu görsel üretimi
+# =============================================================================
+API_PORT = 7860
+API_MAX_BODY = 32 * MB
+API_MAX_UPLOAD = 2 * GB
+API_MAX_COUNT = 8
+API_KEEP_DONE = 60 * 30            # bitmiş işler 30 dk tutulur
+NETWORK_LORA_SUBDIR = "network"    # ağdan gelen LoRA'lar: addons\network\
+
+
+class ApiError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def new_api_key():
+    import secrets
+    return secrets.token_urlsafe(18)
+
+
+def lan_ipv4_addresses():
+    """Bu bilgisayarın yerel ağ adresleri (bağlantı kurmadan)."""
+    import socket
+    out = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if is_private_lan_ip(ip) and ip not in out:
+                out.append(ip)
+    except Exception:
+        pass
+    if not out:
+        s = None
+        try:                                   # UDP "bağlanma" paket göndermez; yalnızca yönlendirme tablosuna bakar
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("192.168.0.1", 9))
+            ip = s.getsockname()[0]
+            if is_private_lan_ip(ip):
+                out.append(ip)
+        except Exception:
+            pass
+        finally:
+            if s is not None:
+                s.close()
+    return out
+
+
+def normalize_image_host(text):
+    """'192.168.1.20', 'http://192.168.1.20:7860/' → '192.168.1.20:7860'. Yalnızca yerel ağ adresleri."""
+    s = re.sub(r"^https?://", "", (text or "").strip(), flags=re.I).strip("/ ")
+    if not s:
+        return None
+    host, _, port = s.partition(":")
+    port = port or str(API_PORT)
+    if not port.isdigit() or not (0 < int(port) < 65536):
+        return None
+    if host in ("localhost", "127.0.0.1"):
+        return f"127.0.0.1:{int(port)}"
+    if not is_private_lan_ip(host):
+        return None
+    return f"{host}:{int(port)}"
+
+
+_SHA1_CACHE = {}
+_SHA1_LOCK = threading.Lock()
+
+
+def file_sha1_cached(path, cache_file=None):
+    """Dosyanın SHA-1'i; (boyut, değişiklik zamanı) aynıysa önbellekten. İsteğe bağlı diskte saklanır."""
+    st = os.stat(path)
+    sig = [st.st_size, int(st.st_mtime)]
+    key = os.path.normcase(os.path.abspath(path))
+    with _SHA1_LOCK:
+        if not _SHA1_CACHE and cache_file and os.path.exists(cache_file):
+            try:
+                with open(cache_file, encoding="utf-8") as f:
+                    _SHA1_CACHE.update(json.load(f))
+            except Exception:
+                pass
+        hit = _SHA1_CACHE.get(key)
+        if hit and hit[0] == sig:
+            return hit[1]
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(4 * MB), b""):
+            h.update(chunk)
+    digest = h.hexdigest()
+    with _SHA1_LOCK:
+        _SHA1_CACHE[key] = [sig, digest]
+        if cache_file:
+            try:
+                tmp = cache_file + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(_SHA1_CACHE, f)
+                os.replace(tmp, cache_file)
+            except Exception:
+                pass
+    return digest
+
+
+_A1111_LORA = re.compile(r"<lora:([^:>]+)(?::([-0-9.]+))?(?::[^>]*)?>", re.I)
+
+
+def parse_a1111_loras(prompt):
+    """'a cat <lora:yarn:0.8>' → ('a cat', [('yarn', 0.8)]) — Automatic1111 LoRA yazımı."""
+    found = [(m.group(1).strip(), float(m.group(2)) if m.group(2) else 1.0) for m in _A1111_LORA.finditer(prompt or "")]
+    clean = re.sub(r"\s{2,}", " ", _A1111_LORA.sub("", prompt or ""))
+    clean = re.sub(r"\s+,", ",", clean)
+    clean = re.sub(r",\s*,+", ",", clean).strip(" ,")
+    return clean, found
+
+
+def snap_size(model, w, h):
+    """İstenen boyutu modele uygun hâle getirir: 16'nın katı, 256–2048 arası, alan en çok ~2.4 MP."""
+    w, h = int(w or model["base_px"]), int(h or model["base_px"])
+    w, h = max(256, min(2048, w)), max(256, min(2048, h))
+    area = w * h
+    cap = 2.4e6
+    if area > cap:
+        k = (cap / area) ** 0.5
+        w, h = int(w * k), int(h * k)
+    return max(256, w // 16 * 16), max(256, h // 16 * 16)
+
+
+def public_model_info(m):
+    """Bir modelin ağa verilecek bilgisi (dosya yolları ve indirme adresleri olmadan)."""
+    keep = ("key", "name", "family", "base_px", "neg", "cfg", "fixed_cfg", "samplers", "turbo", "steps", "license",
+            "desc", "custom", "size_gb", "vram", "vram_min")
+    d = {k: m.get(k) for k in keep if k in m}
+    d["family"] = model_family(m)
+    for k, v in m.items():
+        if k not in d and isinstance(v, (int, float, str, bool, type(None))) and k not in (
+                "file", "models_root", "repo", "variant", "misplaced"):
+            d[k] = v
+    return d
+
+
+class ApiJob:
+    def __init__(self, params, source):
+        import uuid
+        self.id = uuid.uuid4().hex[:12]
+        self.params = params
+        self.source = source
+        self.state = "queued"          # queued | running | done | error | stopped
+        self.progress = 0.0
+        self.text = ""
+        self.images = []               # [(png bytes, meta)]
+        self.error = None
+        self.created = time.time()
+        self.finished = None
+        self.abort = threading.Event()
+        self.done = threading.Event()
+
+    def public(self, since=0):
+        import base64
+        return {"id": self.id, "state": self.state, "progress": round(self.progress, 1), "text": self.text,
+                "error": self.error, "count": len(self.images),
+                "images": [{"index": i, "png": base64.b64encode(b).decode("ascii"), "meta": m}
+                           for i, (b, m) in enumerate(self.images) if i >= since]}
+
+
+class ApiServer:
+    """
+    Basit, bağımlılıksız HTTP sunucusu (Python'un kendi http.server'ı). İşler sırayla, tek tek çalışır;
+    gerçek üretimi 'backend' yapar (programın kendi iş sistemi — arayüzdeki üretimle aynı yol).
+    """
+
+    def __init__(self, backend, lan=False, port=API_PORT, key=""):
+        self.backend = backend
+        self.lan = bool(lan)
+        self.port = int(port)
+        self.key = key or ""
+        self.httpd = None
+        self.jobs = {}
+        self.queue = []
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.stopping = threading.Event()
+        self.current = None
+        self.requests = 0
+
+    # ---- yaşam döngüsü
+    def start(self):
+        from http.server import ThreadingHTTPServer
+        bind = "0.0.0.0" if self.lan else "127.0.0.1"
+        handler = _make_api_handler(self)
+        self.httpd = ThreadingHTTPServer((bind, self.port), handler)
+        self.httpd.daemon_threads = True
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True).start()
+        threading.Thread(target=self._worker, daemon=True).start()
+        return self
+
+    def stop(self):
+        self.stopping.set()
+        self.wake.set()
+        with self.lock:
+            for j in self.queue:
+                j.state, j.error = "stopped", "server stopped"
+                j.done.set()
+            self.queue = []
+            cur = self.current
+        if cur is not None:
+            cur.abort.set()
+            try:
+                self.backend.abort(cur)
+            except Exception:
+                pass
+        if self.httpd is not None:
+            try:
+                self.httpd.shutdown()
+                self.httpd.server_close()
+            except Exception:
+                pass
+            self.httpd = None
+
+    def urls(self):
+        if not self.lan:
+            return [f"http://127.0.0.1:{self.port}"]
+        return [f"http://{ip}:{self.port}" for ip in lan_ipv4_addresses()] or [f"http://<IP>:{self.port}"]
+
+    # ---- kimlik
+    def authorized(self, headers, client_ip):
+        if not self.key:
+            return True
+        if client_ip in ("127.0.0.1", "::1") and not self.lan:
+            return True
+        import base64
+        import hmac
+        cands = []
+        auth = headers.get("Authorization") or ""
+        if auth.lower().startswith("bearer "):
+            cands.append(auth[7:].strip())
+        elif auth.lower().startswith("basic "):
+            try:
+                user_pw = base64.b64decode(auth[6:].strip()).decode("utf-8", "replace")
+                cands.append(user_pw.partition(":")[2])
+            except Exception:
+                pass
+        if headers.get("X-API-Key"):
+            cands.append(headers.get("X-API-Key").strip())
+        return any(hmac.compare_digest(c.encode(), self.key.encode()) for c in cands if c)
+
+    def local_request_ok(self, host, origin):
+        """Yalnızca bu bilgisayar modunda (anahtarsız) Host ve Origin de bu bilgisayarı göstermeli."""
+        if self.lan:
+            return True
+        loc = ("127.0.0.1", "localhost", "::1")
+
+        def name(v):
+            v = (v or "").strip().lower()
+            if "://" in v:
+                v = v.split("://", 1)[1]
+            v = v.split("/", 1)[0]
+            if v.startswith("["):
+                return v[1:].split("]", 1)[0]
+            return v.rsplit(":", 1)[0] if v.count(":") == 1 else v
+        if host and name(host) not in loc:
+            return False
+        if origin and origin.strip().lower() != "null" and name(origin) not in loc:
+            return False
+        if origin and origin.strip().lower() == "null":
+            return False
+        return True
+
+    def client_allowed(self, ip):
+        """Ağ modunda yalnızca yerel ağdan ve bu bilgisayardan gelen bağlantılar."""
+        return ip in ("127.0.0.1", "::1") or is_private_lan_ip(ip)
+
+    # ---- işler
+    def submit(self, params, source):
+        job = ApiJob(params, source)
+        with self.lock:
+            self._gc()
+            if len(self.queue) >= 20:
+                raise ApiError(503, "queue full")
+            self.jobs[job.id] = job
+            self.queue.append(job)
+        self.wake.set()
+        return job
+
+    def cancel(self, job_id):
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                return False
+            if job in self.queue:
+                self.queue.remove(job)
+                job.state, job.error = "stopped", "cancelled"
+                job.done.set()
+                return True
+        job.abort.set()
+        if job is self.current:
+            try:
+                self.backend.abort(job)
+            except Exception:
+                pass
+        return True
+
+    def _gc(self):
+        now = time.time()
+        for jid in [k for k, j in self.jobs.items() if j.finished and now - j.finished > API_KEEP_DONE]:
+            del self.jobs[jid]
+
+    def _worker(self):
+        while not self.stopping.is_set():
+            with self.lock:
+                job = self.queue.pop(0) if self.queue else None
+                self.current = job
+            if job is None:
+                self.wake.wait(1.0)
+                self.wake.clear()
+                continue
+            job.state = "running"
+            try:
+                self.backend.run(job)
+                job.state = "stopped" if job.abort.is_set() and not job.images else "done"
+            except AbortedError:
+                job.state, job.error = "stopped", "stopped"
+            except ApiError as e:
+                job.state, job.error = "error", e.message
+            except Exception as e:  # noqa
+                job.state, job.error = "error", f"{type(e).__name__}: {str(e)[:300]}"
+            finally:
+                job.progress = 100.0 if job.state == "done" else job.progress
+                job.finished = time.time()
+                with self.lock:
+                    self.current = None
+                job.done.set()
+
+    def wait(self, job, timeout=3600):
+        job.done.wait(timeout)
+        if job.state == "error":
+            raise ApiError(500, job.error or "generation failed")
+        if job.state == "stopped" and not job.images:
+            raise ApiError(409, job.error or "stopped")
+        return job
+
+    # ---- istek → parametre dönüştürücüler
+    def a1111_params(self, body):
+        prompt, loras = parse_a1111_loras(body.get("prompt", ""))
+        ov = body.get("override_settings") or {}
+        model = ov.get("sd_model_checkpoint") or body.get("model") or self.backend.current_model()
+        n = int(body.get("batch_size") or 1) * int(body.get("n_iter") or 1)
+        return {"prompt": prompt, "negative": body.get("negative_prompt", ""), "model": model,
+                "width": body.get("width"), "height": body.get("height"), "steps": body.get("steps"),
+                "cfg": body.get("cfg_scale"), "seed": body.get("seed", -1), "count": n,
+                "loras": [{"name": a, "weight": w} for a, w in loras], "raw_prompt": False}
+
+    def openai_params(self, body):
+        size = str(body.get("size") or "")
+        w = h = None
+        if "x" in size:
+            try:
+                w, h = (int(x) for x in size.lower().split("x", 1))
+            except ValueError:
+                w = h = None
+        prompt, loras = parse_a1111_loras(body.get("prompt", ""))
+        return {"prompt": prompt, "negative": "", "model": body.get("model") or self.backend.current_model(),
+                "width": w, "height": h, "count": int(body.get("n") or 1), "seed": -1,
+                "loras": [{"name": a, "weight": wt} for a, wt in loras], "raw_prompt": False}
+
+
+def _make_api_handler(server):
+    from http.server import BaseHTTPRequestHandler
+    import base64
+    from urllib.parse import urlparse, parse_qs
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        server_version = "AILocalImageStudio"
+
+        def log_message(self, *a):          # konsola yazma
+            pass
+
+        # -- yardımcılar
+        def _send(self, status, obj=None, raw=None, ctype="application/json; charset=utf-8"):
+            body = raw if raw is not None else json.dumps(obj if obj is not None else {}, ensure_ascii=False).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _err(self, status, msg):
+            self._send(status, {"error": msg, "detail": msg})
+
+        def _body(self, limit=API_MAX_BODY):
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > limit:
+                raise ApiError(413, "request too large")
+            data = self.rfile.read(n) if n else b"{}"
+            try:
+                return json.loads(data.decode("utf-8") or "{}")
+            except Exception:
+                raise ApiError(400, "invalid JSON")
+
+        def _guard(self):
+            ip = self.client_address[0]
+            if not server.client_allowed(ip):
+                self._err(403, "only local network clients are allowed")
+                return False
+            if not server.local_request_ok(self.headers.get("Host"), self.headers.get("Origin")):
+                # anahtarsız (yalnızca bu bilgisayar) modda bir web sayfasının tarayıcı üzerinden istek atmasını
+                # (DNS rebinding / siteler arası istek) engeller
+                self._err(403, "requests from web pages are not allowed in 'this computer only' mode")
+                return False
+            if not server.authorized(self.headers, ip):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="AI Local Image Studio"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return False
+            server.requests += 1
+            return True
+
+        def _route(self, method):
+            u = urlparse(self.path)
+            path, qs = u.path.rstrip("/") or "/", parse_qs(u.query)
+            if path == "/api/ping":
+                return self._send(200, {"app": "AI Local Image Studio", "version": server.backend.version()})
+            if not self._guard():
+                return
+            b = server.backend
+            try:
+                if method == "GET" and path == "/api/info":
+                    return self._send(200, b.info(server))
+                if method == "GET" and path == "/api/loras":
+                    return self._send(200, {"loras": b.loras()})
+                if method == "GET" and path == "/api/loras/file":
+                    sha = (qs.get("sha1") or [""])[0]
+                    p = b.lora_path(sha)
+                    if not p:
+                        raise ApiError(404, "LoRA not found")
+                    return self._send_file(p)
+                if method == "POST" and path == "/api/loras/upload":
+                    return self._upload(qs)
+                if method == "POST" and path == "/api/jobs":
+                    params = b.prepare(self._body(), source=self.client_address[0], kind="ails")
+                    job = server.submit(params, self.client_address[0])
+                    return self._send(200, {"id": job.id})
+                if path.startswith("/api/jobs/"):
+                    jid = path.rsplit("/", 1)[1]
+                    job = server.jobs.get(jid)
+                    if job is None:
+                        raise ApiError(404, "job not found")
+                    if method == "DELETE":
+                        server.cancel(jid)
+                        return self._send(200, {"ok": True})
+                    since = int((qs.get("since") or ["0"])[0] or 0)
+                    return self._send(200, job.public(since))
+                if method == "POST" and path == "/api/generate":
+                    params = b.prepare(self._body(), source=self.client_address[0], kind="ails")
+                    job = server.wait(server.submit(params, self.client_address[0]))
+                    return self._send(200, job.public(0))
+                # ---- Automatic1111 uyumlu
+                if path.startswith("/sdapi/v1/"):
+                    return self._a1111(method, path[len("/sdapi/v1/"):])
+                # ---- OpenAI uyumlu
+                if method == "GET" and path == "/v1/models":
+                    return self._send(200, {"object": "list", "data": [
+                        {"id": m["key"], "object": "model", "owned_by": "local", "name": m["name"]}
+                        for m in b.models()]})
+                if method == "POST" and path == "/v1/images/generations":
+                    body = self._body()
+                    params = b.prepare(server.openai_params(body), source=self.client_address[0], kind="openai")
+                    job = server.wait(server.submit(params, self.client_address[0]))
+                    data = [{"b64_json": base64.b64encode(png).decode("ascii"),
+                             "revised_prompt": meta.get("prompt", "")} for png, meta in job.images]
+                    return self._send(200, {"created": int(time.time()), "data": data})
+                raise ApiError(404, "unknown endpoint")
+            except ApiError as e:
+                return self._err(e.status, e.message)
+            except Exception as e:  # noqa
+                return self._err(500, f"{type(e).__name__}: {str(e)[:200]}")
+
+        def _a1111(self, method, ep):
+            b = server.backend
+            if method == "GET" and ep == "sd-models":
+                return self._send(200, [{"title": m["name"], "model_name": m["key"], "hash": None, "sha256": None,
+                                         "filename": m["key"], "config": None} for m in b.models()])
+            if method == "GET" and ep == "loras":
+                return self._send(200, [{"name": x["name"], "alias": x["name"], "path": x["name"],
+                                         "metadata": {"base": x["base"]}} for x in b.loras()])
+            if method == "GET" and ep == "options":
+                return self._send(200, {"sd_model_checkpoint": b.current_model(), "samples_format": "png"})
+            if method == "POST" and ep == "options":
+                body = self._body()
+                if body.get("sd_model_checkpoint"):
+                    b.set_default_model(str(body["sd_model_checkpoint"]))
+                return self._send(200, {})
+            if method == "GET" and ep in ("samplers", "schedulers"):
+                return self._send(200, [{"name": "Euler a", "aliases": []}, {"name": "DPM++ 2M Karras", "aliases": []}])
+            if method == "GET" and ep in ("upscalers", "sd-vae", "hypernetworks", "embeddings", "prompt-styles",
+                                          "face-restorers", "realesrgan-models", "scripts", "extensions"):
+                return self._send(200, {"loaded": {}, "skipped": {}} if ep == "embeddings" else [])
+            if method == "GET" and ep == "progress":
+                cur = server.current
+                return self._send(200, {"progress": (cur.progress / 100.0) if cur else 0.0, "eta_relative": 0,
+                                        "state": {"job_count": len(server.queue) + (1 if cur else 0)},
+                                        "current_image": None, "textinfo": cur.text if cur else ""})
+            if method == "POST" and ep == "interrupt":
+                if server.current is not None:
+                    server.cancel(server.current.id)
+                return self._send(200, {})
+            if method == "POST" and ep in ("refresh-checkpoints", "refresh-loras"):
+                return self._send(200, {})
+            if method == "POST" and ep == "txt2img":
+                body = self._body()
+                params = b.prepare(server.a1111_params(body), source=self.client_address[0], kind="a1111")
+                job = server.wait(server.submit(params, self.client_address[0]))
+                imgs = [base64.b64encode(png).decode("ascii") for png, _m in job.images]
+                info = job.images[0][1] if job.images else {}
+                return self._send(200, {"images": imgs, "parameters": body, "info": json.dumps(info, ensure_ascii=False)})
+            raise ApiError(404, "unsupported A1111 endpoint: " + ep)
+
+        def _send_file(self, p):
+            size = os.path.getsize(p)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            from urllib.parse import quote
+            fn = os.path.basename(p)
+            ascii_fn = fn.encode("ascii", "replace").decode("ascii").replace('"', "").replace("?", "_")
+            self.send_header("Content-Disposition",       # başlıklar latin-1: Türkçe ad UTF-8 olarak ayrıca verilir
+                             "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_fn, quote(fn)))
+            self.end_headers()
+            with open(p, "rb") as f:
+                while True:
+                    chunk = f.read(1 * MB)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+
+        def _upload(self, qs):
+            b = server.backend
+            if not b.allow_upload():
+                raise ApiError(403, "this server does not accept LoRA uploads")
+            n = int(self.headers.get("Content-Length") or 0)
+            if n <= 0 or n > API_MAX_UPLOAD:
+                raise ApiError(413, "LoRA file too large")
+            name = safe_folder_name((qs.get("name") or ["lora"])[0], "lora")[:60]
+            want = ((qs.get("sha1") or [""])[0] or "").lower()
+            tmp = b.upload_tmp_path()
+            h = hashlib.sha1()
+            left = n
+            with open(tmp, "wb") as f:
+                while left > 0:
+                    chunk = self.rfile.read(min(1 * MB, left))
+                    if not chunk:
+                        break
+                    h.update(chunk)
+                    f.write(chunk)
+                    left -= len(chunk)
+            if left:
+                os.remove(tmp)
+                raise ApiError(400, "upload incomplete")
+            if want and h.hexdigest() != want:
+                os.remove(tmp)
+                raise ApiError(400, "checksum mismatch")
+            return self._send(200, b.store_upload(tmp, name, h.hexdigest()))
+
+        def do_GET(self):
+            self._route("GET")
+
+        def do_POST(self):
+            self._route("POST")
+
+        def do_DELETE(self):
+            self._route("DELETE")
+
+    return Handler
+
+
+class ImageServerClient:
+    """Ağdaki bir AI Local Image Studio sunucusuyla konuşur (tek kalıcı bağlantı havuzu, sistem proxy'si yok)."""
+
+    def __init__(self, host, key=""):
+        self.host = host
+        self.base = "http://" + host
+        self.key = key or ""
+        self._s = None
+
+    def _sess(self):
+        if self._s is None:
+            import requests
+            from requests.adapters import HTTPAdapter
+            s = requests.Session()
+            s.trust_env = False
+            s.mount("http://", HTTPAdapter(pool_connections=1, pool_maxsize=2, max_retries=0))
+            if self.key:
+                s.headers["Authorization"] = "Bearer " + self.key
+            self._s = s
+        return self._s
+
+    def close(self):
+        if self._s is not None:
+            try:
+                self._s.close()
+            except Exception:
+                pass
+            self._s = None
+
+    def _req(self, method, path, timeout=15, **kw):
+        import requests
+        try:
+            r = self._sess().request(method, self.base + path, timeout=timeout, **kw)
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(f"{self.host}: {type(e).__name__}") from e
+        if r.status_code == 401:
+            raise ApiError(401, "wrong or missing access key")
+        if r.status_code >= 400:
+            try:
+                msg = r.json().get("error") or r.text[:200]
+            except Exception:
+                msg = r.text[:200]
+            raise ApiError(r.status_code, msg)
+        return r
+
+    def ping(self, timeout=3):
+        try:
+            return self._req("GET", "/api/ping", timeout=timeout).json()
+        except Exception:
+            return None
+
+    def info(self):
+        return self._req("GET", "/api/info", timeout=10).json()
+
+    def loras(self):
+        return self._req("GET", "/api/loras", timeout=120).json().get("loras", [])
+
+    def upload_lora(self, path, sha1, name, progress_cb=None, abort_event=None):
+        size = os.path.getsize(path)
+
+        def gen():
+            sent = 0
+            with open(path, "rb") as f:
+                while True:
+                    if abort_event is not None and abort_event.is_set():
+                        raise AbortedError("user")
+                    chunk = f.read(1 * MB)
+                    if not chunk:
+                        break
+                    sent += len(chunk)
+                    if progress_cb:
+                        progress_cb(sent, size)
+                    yield chunk
+        from urllib.parse import quote
+        return self._req("POST", f"/api/loras/upload?name={quote(name)}&sha1={sha1}", timeout=(10, 600),
+                         data=gen(), headers={"Content-Length": str(size),
+                                              "Content-Type": "application/octet-stream"}).json()
+
+    def download_lora(self, sha1, dest, progress_cb=None, abort_event=None):
+        r = self._req("GET", f"/api/loras/file?sha1={sha1}", timeout=(10, 600), stream=True)
+        total = int(r.headers.get("Content-Length") or 0)
+        got = 0
+        tmp = dest + ".part"
+        with r, open(tmp, "wb") as f:
+            for chunk in r.iter_content(1 * MB):
+                if abort_event is not None and abort_event.is_set():
+                    raise AbortedError("user")
+                f.write(chunk)
+                got += len(chunk)
+                if progress_cb:
+                    progress_cb(got, total)
+        os.replace(tmp, dest)
+        return dest
+
+    def submit(self, params):
+        return self._req("POST", "/api/jobs", timeout=30, json=params).json()["id"]
+
+    def job(self, jid, since=0):
+        return self._req("GET", f"/api/jobs/{jid}?since={since}", timeout=60).json()
+
+    def cancel(self, jid):
+        try:
+            self._req("DELETE", f"/api/jobs/{jid}", timeout=10)
+        except Exception:
+            pass
 
 
 # =============================================================================
@@ -4813,7 +5504,8 @@ def find_lora(items, lora_id):
 
 def lora_trigger_text(item):
     """Seçilen LoRA'nın prompt'a eklenecek tetikleyici kelimeleri (yalnızca programın ürettikleri için)."""
-    return (item.get("trigger") or "").strip() if item.get("origin") == "own" else ""
+    # "network": ağdaki sunucunun LoRA'sı — sunucu tetikleyiciyi yalnızca kendi ürettikleri için gönderir
+    return (item.get("trigger") or "").strip() if item.get("origin") in ("own", "network") else ""
 
 
 # =============================================================================

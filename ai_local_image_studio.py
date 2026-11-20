@@ -674,6 +674,55 @@ EN = {
     "v2_status_collage_split": "Cutting collages into frames…",
     "v2_log_collage_split": "✂ {n} collage(s) cut into {new} separate images (originals moved to: {folder})",
     "v2_log_collage_split_failed": "{n} collage(s) could not be cut and were removed from the dataset.",
+    "lbl_img_host": "Image engine:",
+    "btn_net_server": "🌐 Network server…",
+    "img_host_local": "This computer",
+    "img_host_add": "➕ Add a server on the network…",
+    "img_host_add_title": "Image server on the network",
+    "img_host_add_text": "Enter the address of another computer running AI Local Image Studio with its network server turned on (shown in its '🌐 Network server' window), e.g. 192.168.1.20:7860, and its access key.",
+    "img_host_addr": "Address:",
+    "img_host_key": "Access key:",
+    "img_host_connecting": "🌐 connecting…",
+    "img_host_not_connected": "Not connected to the image server yet — connecting now. Try again in a moment.",
+    "img_remote_info": "🌐 {model} is generated on {host} ({gpu}). Nothing is downloaded or loaded on this computer.",
+    "img_remote_queued": "Waiting in the server's queue…",
+    "img_log_local": "Image engine: this computer.",
+    "img_log_connect_later": "The server will be connected when the current job finishes.",
+    "img_log_connecting": "🌐 Connecting to the image server {host}…",
+    "img_log_key_wrong": "❌ The server rejected the access key. Copy it from the server's '🌐 Network server' window.",
+    "img_log_server_err": "❌ Image server: {err}",
+    "img_log_unreachable": "❌ The image server {host} can't be reached. Is the program open there with the network server on? Check the address and that Windows Firewall allows it (private network).",
+    "img_log_connected": "✅ Connected to {host} ({gpu}): {n} model(s), {l} LoRA(s).",
+    "img_log_no_models": "⚠️ No image model is installed on the server yet — install one there first.",
+    "img_log_upload": "📤 Sending LoRA '{name}' ({mb:.0f} MB) to {host} (only once)…",
+    "img_log_remote_start": "🌐 Generating on {host}: {model}, {n} image(s)…",
+    "img_log_remote_saved": "✅ Saved (generated on the server): {path}",
+    "api_log_port_busy": "❌ The network server could not start on port {port} (another program may be using it): {err}",
+    "api_log_started": "🌐 Network server is on: {urls}",
+    "api_log_firewall": "ℹ️ If Windows asks, allow AI Local Image Studio on PRIVATE networks only (not public). Other devices need the access key.",
+    "api_log_stopped": "🌐 Network server is off.",
+    "api_log_request": "🌐 Request from {ip} ({kind}): {n} image(s), {model}",
+    "api_log_lora_in": "📥 LoRA received over the network: {name} (addons\\network)",
+    "net_lbl_serving": "🌐 serving: {url}",
+    "net_lbl_remote": "🌐 using {host}",
+    "net_title": "Network server",
+    "net_intro": "Let other devices use this computer's image models and LoRAs — like Ollama does for text models. Another copy of this program (Image engine → add a server), a phone or tablet browser app, Open WebUI, SillyTavern or Krita can send requests here. Generation runs with this computer's settings, memory protection and LoRAs. Nothing is opened to the internet.",
+    "net_enable": "Turn on the network server",
+    "net_only_me": "Only this computer (127.0.0.1) — for apps on this PC",
+    "net_lan": "My home / office network — other devices can connect (access key required)",
+    "net_port": "Port:",
+    "net_key": "Access key:",
+    "net_key_new": "New key",
+    "net_key_copy": "Copy",
+    "net_uploads": "Accept LoRAs sent from other devices (saved to addons\\network; only .safetensors LoRAs)",
+    "net_compat": "Compatible: this program's own client, Automatic1111 API (/sdapi/v1/txt2img — Open WebUI, SillyTavern, Krita…; LoRA as <lora:name:0.8>) and OpenAI images API (/v1/images/generations). Use the key as 'Bearer' token or as the password (any user name). Requests wait while this computer is busy (e.g. training).",
+    "net_state_on": "✅ Running — addresses:\n{urls}",
+    "net_state_off": "Off.",
+    "net_bad_port": "Enter a port between 1024 and 65535.",
+    "net_apply": "Apply",
+    "net_close": "Close",
+    "lp_network": "🌐 On the server",
+    "status_upload": "Sending to the server…",
     "log_custom_missing": "The model file is no longer there: {path}",
 }
 
@@ -781,7 +830,10 @@ DEFAULT_SETTINGS = {
     "loras": [], "pref_auto": True, "pref_weight": 0.6,
     # Stil Öğrenme / Görsel Analiz penceresi ayarları
     "v2": {},
+    # Ağ: bu bilgisayarın sunucusu ve kullanılan görsel motoru (bu bilgisayar ya da ağdaki bir sunucu)
+    "api": {}, "image_host": "local", "image_hosts": [],
 }
+API_DEFAULTS = {"enabled": False, "lan": False, "port": 7860, "key": "", "uploads": True}
 V2_DEFAULTS = {
     "offline": True, "web_import": False, "web_ack": False, "dataset": "", "recursive": True, "copy": True,
     "min_side": 256, "mode": "light", "base_model": "sd15", "duration": "until_stop", "minutes": 60,
@@ -867,6 +919,23 @@ def load_settings(paths):
         s["llm_host"] = h if h and not h.startswith("127.") else "local"
         if s["llm_host"] != "local" and s["llm_host"] not in s["known_hosts"]:
             s["known_hosts"].insert(0, s["llm_host"])
+    api = dict(API_DEFAULTS)
+    if isinstance(s.get("api"), dict):
+        api.update({k: v for k, v in s["api"].items() if k in API_DEFAULTS})
+    try:
+        api["port"] = int(api["port"]) if 1024 <= int(api["port"]) <= 65535 else 7860
+    except (TypeError, ValueError):
+        api["port"] = 7860
+    api["enabled"], api["lan"], api["uploads"] = bool(api["enabled"]), bool(api["lan"]), bool(api["uploads"])
+    api["key"] = str(api.get("key") or "")
+    s["api"] = api
+    hosts = []
+    for h in s.get("image_hosts") or []:
+        if isinstance(h, dict) and core.normalize_image_host(str(h.get("host", ""))):
+            hosts.append({"host": core.normalize_image_host(h["host"]), "key": str(h.get("key") or "")})
+    s["image_hosts"] = hosts[:12]
+    if s.get("image_host") not in [h["host"] for h in hosts]:
+        s["image_host"] = "local"
     return s
 
 
@@ -2825,7 +2894,7 @@ class LoraPickerWindow:
         self.app.open_path(d)
 
     def reload(self):
-        self.items = core.scan_loras(self.paths)
+        self.items = self.app.lora_items()
         self.populate()
 
     def _item(self, lid):
@@ -2864,6 +2933,8 @@ class LoraPickerWindow:
                     kind = t("lp_own_pref")
                 elif it["origin"] == "own" and short:
                     kind = core.learn_icon(learn) + " " + t("lp_own_kind", kind=short)
+                elif it["origin"] == "network":
+                    kind = t("lp_network")
                 else:
                     kind = t("lp_own") if it["origin"] == "own" else t("lp_external")
                 size = f"{it['size_mb']:.0f} MB" if it["size_mb"] >= 1 else f"{it['size_mb'] * 1024:.0f} KB"
@@ -2980,6 +3051,239 @@ class LoraPickerWindow:
 # =============================================================================
 # Ana uygulama
 # =============================================================================
+class ApiBackend:
+    """
+    Ağ sunucusunun arka ucu: istekleri programın kendi üretim yoluna (job_generate) bağlar. Böylece ağdan gelen
+    görseller de aynı kalite ayarlarından, LoRA'lardan, bellek korumasından ve çökme önlemlerinden geçer.
+    Ağdan gelen istek hiçbir şeyi indirmez: model / motor kurulu değilse açık bir hata döner.
+    """
+
+    def __init__(self, app):
+        self.app = app
+        self.default_model = None
+        self.outdir = os.path.join(app.v_outdir.get(), "network")
+        self.uploads = bool(app.st.get("api", {}).get("uploads", True))
+        self.sha_cache = os.path.join(app.paths.cache, "lora_sha1.json")
+
+    def version(self):
+        return APP_VERSION
+
+    # ---- bilgi
+    def models(self):
+        out = []
+        for m in list(core.IMAGE_MODEL_BY_KEY.values()):
+            try:
+                if core.is_image_model_installed(self.app.paths.models, m):
+                    out.append(core.public_model_info(m))
+            except Exception:
+                continue
+        return out
+
+    def current_model(self):
+        keys = [m["key"] for m in self.models()]
+        for k in (self.default_model, self.app.st.get("model")):
+            if k in keys:
+                return k
+        return keys[0] if keys else ""
+
+    def set_default_model(self, name):
+        m = self._resolve_model(name)
+        if m:
+            self.default_model = m["key"]
+
+    def info(self, server):
+        hw = self.app.hw
+        return {"app": APP_NAME, "version": APP_VERSION, "engine": bool(core.engine_status(self.app.paths)),
+                "gpu": getattr(hw, "gpu_name", "") or "", "vram_gb": round(hw.vram_gb, 1) if hw.cuda_usable else 0.0,
+                "ram_gb": round(hw.ram_total_gb, 1), "busy": self.app.job is not None,
+                "queue": len(server.queue), "uploads": self.uploads, "models": self.models(),
+                "default_model": self.current_model()}
+
+    def _lora_list(self):
+        out = []
+        for it in core.scan_loras(self.app.paths):
+            if it.get("kind") != "lora" or not it.get("path"):
+                continue
+            try:
+                sha = core.file_sha1_cached(it["path"], self.sha_cache)
+                size = os.path.getsize(it["path"])
+            except OSError:
+                continue
+            out.append((it, sha, size))
+        return out
+
+    def loras(self):
+        return [{"sha1": sha, "name": it["name"], "base": it.get("base") or "unknown", "size": size,
+                 "trigger": core.lora_trigger_text(it), "learn": it.get("learn") or "",
+                 "origin": it.get("origin")} for it, sha, size in self._lora_list()]
+
+    def lora_path(self, sha1):
+        for it, sha, _s in self._lora_list():
+            if sha == (sha1 or "").lower():
+                return it["path"]
+        return None
+
+    # ---- LoRA yükleme
+    def allow_upload(self):
+        return self.uploads
+
+    def upload_tmp_path(self):
+        os.makedirs(self.app.paths.tmp, exist_ok=True)
+        return os.path.join(self.app.paths.tmp, "upload_%d_%d.part" % (os.getpid(), threading.get_ident()))
+
+    def store_upload(self, tmp, name, sha1):
+        try:
+            meta, shapes = core.read_safetensors_header(tmp)
+        except Exception:
+            os.remove(tmp)
+            raise core.ApiError(400, "not a valid .safetensors file")
+        if core.classify_safetensors(meta, shapes)[0] in core.CUSTOM_FAMILIES + ("unsupported",):
+            os.remove(tmp)
+            raise core.ApiError(400, "this is a full model, not a LoRA")
+        existing = self.lora_path(sha1)
+        if existing:
+            os.remove(tmp)
+            return {"sha1": sha1, "name": os.path.splitext(os.path.basename(existing))[0], "existed": True}
+        d = os.path.join(core.addons_dir(self.app.paths), core.NETWORK_LORA_SUBDIR)
+        os.makedirs(d, exist_ok=True)
+        dest, k = os.path.join(d, name + ".safetensors"), 2
+        while os.path.exists(dest):
+            dest, k = os.path.join(d, "%s_%d.safetensors" % (name, k)), k + 1
+        shutil.move(tmp, dest)
+        core.file_sha1_cached(dest, self.sha_cache)
+        self.app.log(t("api_log_lora_in", name=os.path.basename(dest)))
+        return {"sha1": sha1, "name": os.path.splitext(os.path.basename(dest))[0], "existed": False}
+
+    # ---- istek → üretim parametreleri
+    def _resolve_model(self, name):
+        name = str(name or "").strip()
+        ms = [m for m in core.IMAGE_MODEL_BY_KEY.values()]
+        low = name.lower()
+        for m in ms:
+            if m["key"] == name or m["name"].lower() == low:
+                return m
+        for m in ms:
+            if low and (low in m["name"].lower() or low in m["key"].lower()):
+                return m
+        return None
+
+    def prepare(self, body, source="", kind="ails"):
+        app = self.app
+        if not core.engine_status(app.paths):
+            raise core.ApiError(503, "the image engine is not installed on the server")
+        prompt = str(body.get("prompt") or body.get("text") or "").strip()
+        if not prompt:
+            raise core.ApiError(400, "prompt is empty")
+        want = body.get("model") or self.current_model()
+        m = self._resolve_model(want)
+        if m is None or not core.is_image_model_installed(app.paths.models, m):
+            raise core.ApiError(400, f"model not installed on this server: {want}")
+        if m.get("custom") and not core.custom_config_dir(app.paths.models, m["family"]):
+            raise core.ApiError(400, "this model's settings pack is not installed on the server")
+        try:
+            seed = int(body.get("seed", -1))
+        except (TypeError, ValueError):
+            seed = -1
+        count = max(1, min(core.API_MAX_COUNT, int(body.get("count") or 1)))
+        steps = body.get("steps")
+        try:
+            steps = max(1, min(150, int(steps))) if steps not in (None, "", 0) else 0
+        except (TypeError, ValueError):
+            steps = 0
+        size = None
+        if body.get("width") and body.get("height"):
+            size = (int(body["width"]), int(body["height"]))
+        creat = body.get("creativity")
+        p = {
+            "text": prompt, "extra": str(body.get("negative") or ""), "model": m["key"],
+            "llm": "", "llm_host": "local", "use_llm": False, "show_prompt": False,
+            "aspect": str(body.get("aspect") or "1:1"), "orient": str(body.get("orient") or "landscape"),
+            "res": str(body.get("res") or "normal"), "quality": str(body.get("quality") or "balanced"),
+            "creativity": int(creat) if isinstance(creat, (int, float)) else 5, "creativity_auto": False,
+            "seed_random": seed < 0, "seed": max(0, seed), "count": count, "outdir": self.outdir, "plan": {},
+            "steps_manual": steps, "sampler": str(body.get("sampler") or "auto"),
+            "hires": str(body.get("hires") or ("auto" if kind == "ails" else "off")),
+            "detailer": bool(body.get("detailer", False)), "fix_faces": bool(body.get("fix_faces", True)),
+            "fix_hands": bool(body.get("fix_hands", True)), "auto_neg": bool(body.get("auto_neg", True)),
+            "save_base": False, "cards": [], "raw_prompt": bool(body.get("raw_prompt", False)),
+            "size": size, "cfg": body.get("cfg"), "_source": source, "_kind": kind,
+        }
+        if p["aspect"] == "auto":
+            p["aspect"] = "1:1"
+        if p["orient"] == "auto":
+            p["orient"] = "landscape"
+        if p["sampler"] not in core.SAMPLER_NAMES and p["sampler"] != "auto":
+            p["sampler"] = "auto"
+        # LoRA'lar: SHA-1 (programın istemcisi) ya da ad (Automatic1111 <lora:ad:güç>)
+        specs, skipped = [], []
+        req = body.get("loras") or []
+        if req:
+            listed = self._lora_list()
+            for r in req[:12]:
+                sha = str(r.get("sha1") or "").lower()
+                nm = str(r.get("name") or "").lower()
+                hit = next((x for x in listed if sha and x[1] == sha), None) or \
+                    next((x for x in listed if nm and x[0]["name"].lower() == nm), None) or \
+                    next((x for x in listed if nm and
+                          os.path.splitext(os.path.basename(x[0]["path"]))[0].lower() == nm), None)
+                if hit is None:
+                    skipped.append((r.get("name") or sha[:8], "missing"))
+                    continue
+                it = hit[0]
+                if core.lora_compat(it["base"], core.model_family(m)) == "no":
+                    skipped.append((it["name"], "incompatible"))
+                    continue
+                try:
+                    w = max(-2.0, min(2.0, float(r.get("weight", 0.8))))
+                except (TypeError, ValueError):
+                    w = 0.8
+                specs.append((it["id"], it["path"], w, it))
+        p["lora_specs"], p["lora_skipped"] = specs, skipped
+        return p
+
+    # ---- çalıştırma (sunucunun iş thread'inde)
+    def run(self, job):
+        app = self.app
+        p = dict(job.params)
+        p["_collect"] = []
+        done, box = threading.Event(), {}
+        sent = 0
+        while True:
+            if job.abort.is_set():
+                raise core.AbortedError("user")
+            if app.call_ui(app._start_api_job, job, p, done, box):
+                break
+            job.text = "busy"
+            time.sleep(1.0)
+        while not done.wait(0.3):
+            sent = self._collect(job, p, sent)
+            if job.abort.is_set() and app._api_job is job:
+                app.abort.set()
+        sent = self._collect(job, p, sent)
+        err = box.get("err")
+        if err is not None and not job.images:
+            if isinstance(err, core.AbortedError):
+                raise err
+            raise core.ApiError(500, "generation failed on the server (see the server's log)"
+                                if isinstance(err, JobFail) else friendly_error(err))
+
+    def _collect(self, job, p, sent):
+        coll = p["_collect"]
+        while sent < len(coll):
+            path, meta = coll[sent]
+            try:
+                with open(path, "rb") as f:
+                    job.images.append((f.read(), meta))
+            except OSError:
+                pass
+            sent += 1
+        return sent
+
+    def abort(self, job):
+        if self.app._api_job is job:
+            self.app.abort.set()
+
+
 class ImageStudio:
     def __init__(self, root, paths):
         self.r = root
@@ -3020,6 +3324,10 @@ class ImageStudio:
         self.combos = []
         self._shutdown_active = False
         self._prev_host = self.st["llm_host"]
+        self._prev_image_host = self.st["image_host"]
+        self.remote = None             # bağlı ağ sunucusu: {"host", "key", "info", "models", "loras"}
+        self.api_server = None         # bu bilgisayarın ağ sunucusu (açıksa)
+        self._api_job = None           # şu an çalışan ağ isteği
 
         self._init_vars()
         self._build()
@@ -3033,12 +3341,17 @@ class ImageStudio:
         if IS_WIN and 0 <= self.hw.pagefile_gb < 4:
             self.log(t("log_pagefile_warn"))
         self.start_job("setup", self.job_setup)
+        if self.st["api"].get("enabled"):
+            self.r.after(800, self.start_api_server)
+        if self.st["image_host"] != "local":
+            self.r.after(2500, self._auto_connect_image_host)
 
     # ------------------------------------------------------------------ vars
     def _init_vars(self):
         s = self.st
         self.v_lang = tk.StringVar(value=s["lang"])
         self.v_model = tk.StringVar(value=s["model"])
+        self.v_image_host = tk.StringVar(value=s["image_host"])
         self.v_llm = tk.StringVar(value=s["llm"])
         self.v_llm_host = tk.StringVar(value=s["llm_host"])
         self.v_profile = tk.StringVar(value=s["profile"])
@@ -3084,6 +3397,7 @@ class ImageStudio:
             "hires": self.v_hires.get(), "detailer": self.v_detailer.get(), "fix_faces": self.v_fix_faces.get(),
             "fix_hands": self.v_fix_hands.get(), "auto_neg": self.v_auto_neg.get(), "save_base": self.v_save_base.get(),
             "pref_auto": self.v_pref_auto.get(), "pref_weight": round(float(self.v_pref_weight.get()), 2),
+            "image_host": self.v_image_host.get() if self.v_image_host.get() != "manual" else self._prev_image_host,
         })
         return self.st
 
@@ -3241,7 +3555,19 @@ class ImageStudio:
         self.b_help = ttk.Button(row4b, text="❔", width=3, command=self.on_remote_help)
         self.b_help.pack(side="left", padx=2)
         self.lbl_llm_loc = tk.Label(self.l4, bg=BG, fg="#888888", font=self.f.n9, anchor="w", justify="left", wraplength=680)
-        self.lbl_llm_loc.pack(fill="x", padx=10, pady=(1, 4))
+        self.lbl_llm_loc.pack(fill="x", padx=10, pady=(1, 2))
+        row4c = tk.Frame(self.l4, bg=BG)
+        row4c.pack(fill="x", padx=6, pady=(0, 4))
+        self.lbl_img_host = tk.Label(row4c, bg=BG, fg=TXT, font=self.f.n9)
+        self.lbl_img_host.pack(side="left", padx=(4, 2))
+        self.kc_img_host = KeyCombo(row4c, self.v_image_host, self._image_host_items, width=24,
+                                    on_change=self.on_image_host_change)
+        self.kc_img_host.cb.pack(side="left")
+        self.combos.append(self.kc_img_host)
+        self.b_net = ttk.Button(row4c, command=self.open_network_window)
+        self.b_net.pack(side="left", padx=(8, 2))
+        self.lbl_net = tk.Label(row4c, bg=BG, fg="#888888", font=self.f.n9, anchor="w")
+        self.lbl_net.pack(side="left", padx=(6, 2), fill="x", expand=True)
 
         # --- 5. özel talimat / negatif ---
         self.l5 = self._labelframe(left, 7, sticky="nsew", weight=1)
@@ -3386,6 +3712,12 @@ class ImageStudio:
         return [("auto", t("auto")), ("on", t("hires_on")), ("off", t("hires_off"))]
 
     def _image_model_items(self):
+        h = self.v_image_host.get()
+        if h not in ("local", "manual"):
+            if not self.image_remote():
+                return [(self.v_model.get(), t("img_host_connecting"))]
+            return [(k, f"🌐 {m['name']}  [{core.BASE_LABELS.get(m.get('family'), m.get('family') or '')}]")
+                    for k, m in self.remote["models"].items()]
         out = []
         for m in core.IMAGE_MODELS:
             ok = core.is_image_model_installed(self.paths.models, m)
@@ -3510,6 +3842,9 @@ class ImageStudio:
         self.lbl_imodel.config(text=t("lbl_image_model"))
         self.lbl_llm.config(text=t("lbl_llm"))
         self.lbl_llm_server.config(text=t("lbl_llm_server"))
+        self.lbl_img_host.config(text=t("lbl_img_host"))
+        self.b_net.config(text=t("btn_net_server"))
+        self.update_net_label()
         self.b_scan.config(text=t("btn_scan"))
         self.l5.config(text=t("sec5"))
         self.lbl_hint5.config(text=t("sec5_hint"))
@@ -3558,7 +3893,18 @@ class ImageStudio:
         return "  |  ".join(parts)
 
     def model(self):
+        if self.image_remote():
+            ms = self.remote["models"]
+            if self.v_model.get() in ms:
+                return ms[self.v_model.get()]
+            if ms:
+                return next(iter(ms.values()))
         return core.IMAGE_MODEL_BY_KEY.get(self.v_model.get(), core.IMAGE_MODELS[1])
+
+    def image_remote(self):
+        """Görseller ağdaki bir sunucuda mı üretiliyor (ve sunucuya bağlanıldı mı)?"""
+        h = self.v_image_host.get()
+        return h not in ("local", "manual") and self.remote is not None and self.remote.get("host") == h
 
     def effective_profile(self, m=None):
         m = m or self.model()
@@ -3573,6 +3919,12 @@ class ImageStudio:
         if not hasattr(self, "lbl_prof_info"):
             return
         m = self.model()
+        if self.image_remote():
+            inf = self.remote["info"]
+            gpu = (f"{inf['gpu']}, {inf.get('vram_gb') or 0} GB VRAM" if inf.get("gpu") and inf.get("vram_gb")
+                   else "CPU")
+            self.lbl_prof_info.config(text=t("img_remote_info", model=m["name"], host=self.remote["host"], gpu=gpu))
+            return
         p = self.effective_profile(m)
         txt = t("model_profile_info", model=m["name"], profile=t("prof_" + p), desc=t("prof_desc_" + p))
         txt += "   " + self._fit_text(core.fit_level(m, self.hw))
@@ -3667,6 +4019,9 @@ class ImageStudio:
         self.lbl_counter.config(text=counter)
 
     def progress(self, pct, counter=None):
+        job = getattr(self, "_api_job", None)
+        if job is not None:                  # ağdan gelen iş: ilerleme istemciye de gider
+            job.progress, job.text = float(pct or 0.0), counter or ""
         self.post(self.set_progress, pct, counter)
 
     def bytes_progress(self, done, total):
@@ -3844,6 +4199,374 @@ class ImageStudio:
             else:
                 self.start_job("check", self._check_remote, v)
 
+    # ------------------------------------------------------------- ağ: görsel motoru seçimi (istemci)
+    def _image_host_items(self):
+        items = [("local", t("img_host_local"))]
+        items += [(h["host"], "🌐 " + h["host"]) for h in self.st.get("image_hosts", [])]
+        items.append(("manual", t("img_host_add")))
+        return items
+
+    def _host_key(self, host):
+        return next((h.get("key", "") for h in self.st.get("image_hosts", []) if h["host"] == host), "")
+
+    def _ask_image_host(self):
+        """Ağdaki sunucunun adresi ve erişim anahtarı. Dönüş: (adres, anahtar) ya da None."""
+        dlg = tk.Toplevel(self.r)
+        dlg.title(t("img_host_add_title"))
+        dlg.configure(bg=CARD_BG)
+        dlg.transient(self.r)
+        res = {}
+        tk.Label(dlg, text=t("img_host_add_text"), bg=CARD_BG, fg=TXT, font=self.f.n10, justify="left",
+                 wraplength=460, anchor="w").pack(fill="x", padx=14, pady=(12, 6))
+        frm = tk.Frame(dlg, bg=CARD_BG)
+        frm.pack(fill="x", padx=14)
+        v_addr, v_key = tk.StringVar(), tk.StringVar()
+        tk.Label(frm, text=t("img_host_addr"), bg=CARD_BG, fg=LBL, font=self.f.n9).grid(row=0, column=0, sticky="w")
+        e1 = ttk.Entry(frm, textvariable=v_addr, width=32)
+        e1.grid(row=0, column=1, sticky="w", padx=6, pady=3)
+        tk.Label(frm, text=t("img_host_key"), bg=CARD_BG, fg=LBL, font=self.f.n9).grid(row=1, column=0, sticky="w")
+        ttk.Entry(frm, textvariable=v_key, width=32, show="•").grid(row=1, column=1, sticky="w", padx=6, pady=3)
+        btns = tk.Frame(dlg, bg=CARD_BG)
+        btns.pack(fill="x", padx=14, pady=12)
+
+        def ok():
+            host = core.normalize_image_host(v_addr.get())
+            if not host:
+                messagebox.showwarning(t("img_host_add_title"), t("bad_ip"), parent=dlg)
+                return
+            res["v"] = (host, v_key.get().strip())
+            dlg.destroy()
+        tk.Button(btns, text="OK", bg=ORANGE, fg="white", font=self.f.b10, relief="flat", command=ok,
+                  cursor="hand2").pack(side="left", fill="x", expand=True, ipady=4)
+        tk.Button(btns, text=t("preview_cancel"), bg=BTN, fg=TXT, font=self.f.b10, relief="flat",
+                  command=dlg.destroy, cursor="hand2").pack(side="left", padx=(8, 0), ipady=4, ipadx=12)
+        dlg.bind("<Return>", lambda e: ok())
+        dlg.grab_set()
+        e1.focus_set()
+        self.r.wait_window(dlg)
+        return res.get("v")
+
+    def on_image_host_change(self):
+        v = self.v_image_host.get()
+        if v == "manual":
+            got = self._ask_image_host()
+            if not got:
+                self.v_image_host.set(self._prev_image_host)
+                return
+            host, key = got
+            hosts = [h for h in self.st["image_hosts"] if h["host"] != host]
+            self.st["image_hosts"] = [{"host": host, "key": key}] + hosts
+            self.v_image_host.set(host)
+            v = host
+        self._prev_image_host = v
+        self.remote = None
+        if v == "local":
+            core.refresh_custom_models(self.paths)
+            if self.v_model.get() not in core.IMAGE_MODEL_BY_KEY:
+                self.v_model.set("sdxl")
+            self.log(t("img_log_local"))
+        self.save()
+        self.refresh_lists()
+        self.update_lora_label()
+        if v != "local":
+            if self.running():
+                self.log(t("img_log_connect_later"))
+            else:
+                self.start_job("check", self._connect_image_host, v)
+
+    def _auto_connect_image_host(self):
+        h = self.v_image_host.get()
+        if h in ("local", "manual") or self.image_remote():
+            return
+        if self.running():
+            self.r.after(3000, self._auto_connect_image_host)
+            return
+        self.start_job("check", self._connect_image_host, h)
+
+    def _connect_image_host(self, host):
+        """Ağdaki sunucuya bağlanır, modellerini ve LoRA'larını alır (iş thread'i)."""
+        self.status("status_scan")
+        self.log(t("img_log_connecting", host=host))
+        cl = core.ImageServerClient(host, self._host_key(host))
+        try:
+            info = cl.info()
+            loras = cl.loras()
+        except core.ApiError as e:
+            self.log(t("img_log_key_wrong") if e.status == 401 else t("img_log_server_err", err=e.message))
+            self.status("status_error")
+            raise JobFail()
+        except core.NetworkError:
+            self.log(t("img_log_unreachable", host=host))
+            self.status("status_error")
+            raise JobFail()
+        finally:
+            cl.close()
+        models = {}
+        for d in info.get("models") or []:
+            local = core.IMAGE_MODEL_BY_KEY.get(d.get("key"))
+            m = dict(local) if (local and not local.get("custom")) else {}
+            m.update(d)
+            m["remote"] = True
+            models[m["key"]] = m
+
+        def apply():
+            if self.v_image_host.get() != host:
+                return
+            self.remote = {"host": host, "key": self._host_key(host), "info": info, "models": models,
+                           "loras": loras}
+            if models and self.v_model.get() not in models:
+                dm = info.get("default_model")
+                self.v_model.set(dm if dm in models else next(iter(models)))
+            self.refresh_lists()
+            self.update_lora_label()
+            self.update_net_label()
+        self.post(apply)
+        self.log(t("img_log_connected", host=host, gpu=info.get("gpu") or "CPU", n=len(models), l=len(loras)))
+        if not models:
+            self.log(t("img_log_no_models"))
+        self.status("status_ready")
+
+    # ------------------------------------------------------------- ağ: bu bilgisayarın sunucusu
+    def start_api_server(self):
+        self.stop_api_server(quiet=True)
+        api = self.st["api"]
+        if api["lan"] and not api["key"]:
+            api["key"] = core.new_api_key()
+            self.save()
+        try:
+            self.api_server = core.ApiServer(ApiBackend(self), lan=api["lan"], port=api["port"],
+                                             key=api["key"] if api["lan"] else "").start()
+        except OSError as e:
+            self.api_server = None
+            self.log(t("api_log_port_busy", port=api["port"], err=str(e)[:120]))
+            self.update_net_label()
+            return False
+        self.log(t("api_log_started", urls=", ".join(self.api_server.urls())))
+        if api["lan"]:
+            self.log(t("api_log_firewall"))
+        self.update_net_label()
+        return True
+
+    def stop_api_server(self, quiet=False):
+        srv, self.api_server = self.api_server, None
+        if srv is not None:
+            try:
+                srv.stop()
+            except Exception:
+                pass
+            if not quiet:
+                self.log(t("api_log_stopped"))
+        self.update_net_label()
+
+    def update_net_label(self):
+        if not hasattr(self, "lbl_net"):
+            return
+        parts = []
+        if self.api_server is not None:
+            parts.append(t("net_lbl_serving", url=self.api_server.urls()[0]))
+        if self.image_remote():
+            parts.append(t("net_lbl_remote", host=self.remote["host"]))
+        self.lbl_net.config(text="  •  ".join(parts), fg=GREEN if parts else "#888888")
+
+    def _start_api_job(self, job, p, done, box):
+        """(Arayüz thread'i) Program boştaysa ağ isteğini normal bir üretim işi olarak başlatır."""
+        if self.running():
+            return False
+        self._api_job = job
+        m = core.IMAGE_MODEL_BY_KEY.get(p["model"], {"name": p["model"]})
+        self.log(t("api_log_request", ip=p.get("_source") or "?", n=p["count"], model=m["name"],
+                   kind={"a1111": "Automatic1111", "openai": "OpenAI"}.get(p.get("_kind"), "AILS")))
+        if not self.start_job("generate", self._api_job_fn, p, done, box):
+            self._api_job = None
+            return False
+        return True
+
+    def _api_job_fn(self, p, done, box):
+        try:
+            self.job_generate(p)
+        except BaseException as e:
+            box["err"] = e
+            raise
+        finally:
+            self._api_job = None
+            done.set()
+
+    def open_network_window(self):
+        api = self.st["api"]
+        dlg = tk.Toplevel(self.r)
+        dlg.title(t("net_title"))
+        dlg.configure(bg=CARD_BG)
+        dlg.transient(self.r)
+        f = self.f
+        v_on = tk.BooleanVar(value=self.api_server is not None)
+        v_lan = tk.BooleanVar(value=api["lan"])
+        v_port = tk.StringVar(value=str(api["port"]))
+        v_up = tk.BooleanVar(value=api["uploads"])
+        v_key = tk.StringVar(value=api["key"])
+        tk.Label(dlg, text=t("net_intro"), bg=CARD_BG, fg=TXT, font=f.n10, justify="left", wraplength=620,
+                 anchor="w").pack(fill="x", padx=14, pady=(12, 6))
+        ttk.Checkbutton(dlg, text=t("net_enable"), variable=v_on).pack(anchor="w", padx=14, pady=2)
+        rf = tk.Frame(dlg, bg=CARD_BG)
+        rf.pack(fill="x", padx=30)
+        ttk.Radiobutton(rf, text=t("net_only_me"), variable=v_lan, value=False).pack(anchor="w")
+        ttk.Radiobutton(rf, text=t("net_lan"), variable=v_lan, value=True).pack(anchor="w")
+        g = tk.Frame(dlg, bg=CARD_BG)
+        g.pack(fill="x", padx=30, pady=4)
+        tk.Label(g, text=t("net_port"), bg=CARD_BG, fg=LBL, font=f.n9).grid(row=0, column=0, sticky="w")
+        ttk.Entry(g, textvariable=v_port, width=8).grid(row=0, column=1, sticky="w", padx=6, pady=2)
+        tk.Label(g, text=t("net_key"), bg=CARD_BG, fg=LBL, font=f.n9).grid(row=1, column=0, sticky="w")
+        ttk.Entry(g, textvariable=v_key, width=30, state="readonly").grid(row=1, column=1, sticky="w", padx=6, pady=2)
+
+        def new_key():
+            v_key.set(core.new_api_key())
+
+        def copy_key():
+            self.r.clipboard_clear()
+            self.r.clipboard_append(v_key.get())
+        ttk.Button(g, text=t("net_key_new"), command=new_key).grid(row=1, column=2, padx=2)
+        ttk.Button(g, text=t("net_key_copy"), command=copy_key).grid(row=1, column=3, padx=2)
+        ttk.Checkbutton(dlg, text=t("net_uploads"), variable=v_up).pack(anchor="w", padx=30, pady=2)
+        lbl_state = tk.Label(dlg, bg=CARD_BG, fg=GREEN, font=f.b9, justify="left", wraplength=620, anchor="w")
+        lbl_state.pack(fill="x", padx=14, pady=(8, 2))
+        tk.Label(dlg, text=t("net_compat"), bg=CARD_BG, fg="#999999", font=f.n9, justify="left", wraplength=620,
+                 anchor="w").pack(fill="x", padx=14, pady=(2, 4))
+
+        def show_state():
+            if self.api_server is not None:
+                lbl_state.config(text=t("net_state_on", urls="\n".join(self.api_server.urls())), fg=GREEN)
+            else:
+                lbl_state.config(text=t("net_state_off"), fg="#999999")
+        show_state()
+        btns = tk.Frame(dlg, bg=CARD_BG)
+        btns.pack(fill="x", padx=14, pady=12)
+
+        def apply():
+            try:
+                port = int(v_port.get())
+                if not 1024 <= port <= 65535:
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning(t("net_title"), t("net_bad_port"), parent=dlg)
+                return
+            if v_lan.get() and not v_key.get():
+                v_key.set(core.new_api_key())
+            api.update(enabled=bool(v_on.get()), lan=bool(v_lan.get()), port=port, uploads=bool(v_up.get()),
+                       key=v_key.get())
+            self.save()
+            if api["enabled"]:
+                self.start_api_server()
+            else:
+                self.stop_api_server()
+            show_state()
+        tk.Button(btns, text=t("net_apply"), bg=ORANGE, fg="white", font=f.b10, relief="flat", command=apply,
+                  cursor="hand2").pack(side="left", fill="x", expand=True, ipady=4)
+        tk.Button(btns, text=t("net_close"), bg=BTN, fg=TXT, font=f.b10, relief="flat", command=dlg.destroy,
+                  cursor="hand2").pack(side="left", padx=(8, 0), ipady=4, ipadx=12)
+        self.net_win = dlg
+        return dlg
+
+    # ------------------------------------------------------------- ağ: LoRA listesi (yerel + sunucudaki)
+    def lora_items(self):
+        items = core.scan_loras(self.paths)
+        if self.image_remote():
+            local = {(i["name"].lower(), round(i["size_mb"], 3)) for i in items if i["kind"] == "lora"}
+            for x in self.remote.get("loras") or []:
+                key = (x["name"].lower(), round(x["size"] / core.MB, 3))
+                if key in local:
+                    continue
+                items.append({"id": "net:" + x["sha1"], "kind": "lora", "origin": "network", "name": x["name"],
+                              "path": None, "base": x.get("base") or "unknown", "size_mb": x["size"] / core.MB,
+                              "trigger": x.get("trigger", ""), "tag": "", "type": "lora", "learn": x.get("learn", ""),
+                              "created": "", "sample": "", "sha1": x["sha1"]})
+        return items
+
+    # ------------------------------------------------------------- ağ: uzak üretim (istemci, iş thread'i)
+    def job_generate_remote(self, p):
+        import base64
+        import io
+        from PIL import Image
+        host, key = p["remote"]["host"], p["remote"]["key"]
+        m = p["model_info"]
+        cl = core.ImageServerClient(host, key)
+        try:
+            specs = list(p.get("lora_specs") or [])
+            for name, why in p.get("lora_skipped") or []:
+                self.log(t("log_lora_skip_" + why, name=name))
+            pos, neg, aspect, orient, creat = self._prepare_prompt(p, m)
+            pos, neg = self._merge_prompt_extras(m, p, specs, pos, neg)
+            if p["show_prompt"]:
+                r = self.call_ui(self._preview_dialog, pos, neg, m)
+                if not r or not r.get("ok"):
+                    raise core.AbortedError("cancel")
+                pos, neg = r["pos"], r["neg"]
+            remote_shas = {x["sha1"] for x in (p.get("remote_loras") or [])}
+            loras = []
+            cache = os.path.join(self.paths.cache, "lora_sha1.json")
+            for _lid, path, w, it in specs:
+                if it.get("origin") == "network":
+                    loras.append({"sha1": it["sha1"], "weight": w, "name": it["name"]})
+                    continue
+                sha = core.file_sha1_cached(path, cache)
+                if sha not in remote_shas:
+                    self.status("status_upload")
+                    self.log(t("img_log_upload", name=it["name"], mb=os.path.getsize(path) / core.MB, host=host))
+                    cl.upload_lora(path, sha, it["name"], self.bytes_progress, self.abort)
+                    remote_shas.add(sha)
+                    entry = {"sha1": sha, "name": it["name"], "base": it.get("base") or "unknown",
+                             "size": os.path.getsize(path), "trigger": "", "learn": it.get("learn") or "",
+                             "origin": "external"}
+
+                    def remember(e=entry):      # aynı LoRA bir daha gönderilmesin
+                        if self.remote is not None and self.remote.get("host") == host:
+                            self.remote.setdefault("loras", []).append(e)
+                    self.post(remember)
+                loras.append({"sha1": sha, "weight": w, "name": it["name"]})
+            body = {"prompt": pos, "negative": neg, "raw_prompt": True, "model": m["key"], "aspect": aspect,
+                    "orient": orient, "res": p["res"], "quality": p["quality"], "creativity": creat,
+                    "seed": -1 if p["seed_random"] else p["seed"], "count": p["count"], "steps": p["steps_manual"],
+                    "sampler": p["sampler"], "hires": p["hires"], "detailer": p["detailer"],
+                    "fix_faces": p["fix_faces"], "fix_hands": p["fix_hands"], "auto_neg": False, "loras": loras}
+            self.status("status_gen")
+            self.log(t("img_log_remote_start", host=host, model=m["name"], n=p["count"]))
+            jid = cl.submit(body)
+            got, last = 0, {}
+            os.makedirs(p["outdir"], exist_ok=True)
+            while True:
+                if self.abort.is_set():
+                    cl.cancel(jid)
+                    raise core.AbortedError("user")
+                last = cl.job(jid, since=got)
+                for im in last.get("images") or []:
+                    img = Image.open(io.BytesIO(base64.b64decode(im["png"])))
+                    img.load()
+                    meta = dict(im.get("meta") or {}, server=host)
+                    out = self._save_image(img, p["outdir"], m, meta.get("seed", 0), meta)
+                    self.log(t("img_log_remote_saved", path=out))
+                    self.post(self.add_to_gallery, out, meta, True)
+                    got += 1
+                if last.get("state") == "running":
+                    self.progress(last.get("progress") or 0.0, last.get("text") or "")
+                elif last.get("state") == "queued":
+                    self.post(self.set_indeterminate, t("img_remote_queued"))
+                if last.get("state") in ("done", "error", "stopped"):
+                    break
+                time.sleep(1.0)
+            if last.get("state") == "error":
+                self.log(t("img_log_server_err", err=last.get("error") or "?"))
+                raise JobFail()
+            if last.get("state") == "stopped" and not got:
+                raise core.AbortedError("user")
+        except core.ApiError as e:
+            self.log(t("img_log_key_wrong") if e.status == 401 else t("img_log_server_err", err=e.message))
+            raise JobFail()
+        except core.NetworkError:
+            self.log(t("img_log_unreachable", host=host))
+            raise JobFail()
+        finally:
+            cl.close()
+        self.progress(100)
+        self.status("status_done")
+
     # ------------------------------------------------------------- download plan (UI thread)
     def _plan(self, engine=False, model=None, upscaler=False, llm=None, detailer=False, peft=False, captioner=False,
               cv2=False, train_base=None):
@@ -4019,7 +4742,7 @@ class ImageStudio:
 
     def _lora_plan(self, m):
         """Seçili LoRA'lar → (uygulanacaklar [(kimlik, yol, güç, öğe)], stil kartları, atlananlar [(ad, neden)])."""
-        items = {i["id"]: i for i in core.scan_loras(self.paths)}
+        items = {i["id"]: i for i in self.lora_items()}
         specs, cards, skipped = [], [], []
         for sel in self.st.get("loras", []):
             it = items.get(sel["id"])
@@ -4049,7 +4772,7 @@ class ImageStudio:
         if not sel:
             self.lbl_loras.config(text=t("lora_none"), fg="#888888")
             return
-        items = {i["id"]: i for i in core.scan_loras(self.paths)}
+        items = {i["id"]: i for i in self.lora_items()}
         m = self.model()
         parts, bad = [], False
         for x in sel:
@@ -4354,8 +5077,16 @@ class ImageStudio:
         m = self.model()
         want_fix = self.v_detailer.get() and (self.v_fix_faces.get() or self.v_fix_hands.get())
         specs, cards, skipped = self._lora_plan(m)
-        plan = self._plan(engine=True, model=m, llm=self.v_llm.get() if self.v_use_llm.get() else None,
-                          detailer=want_fix, peft=bool(specs))
+        remote = self.v_image_host.get() not in ("local", "manual")
+        if remote and not self.image_remote():
+            messagebox.showinfo(APP_NAME, t("img_host_not_connected"), parent=self.r)
+            self._auto_connect_image_host()
+            return
+        if remote:      # görsel ağdaki sunucuda üretilir: bu bilgisayara motor / model indirilmez
+            plan = self._plan(llm=self.v_llm.get() if self.v_use_llm.get() else None)
+        else:
+            plan = self._plan(engine=True, model=m, llm=self.v_llm.get() if self.v_use_llm.get() else None,
+                              detailer=want_fix, peft=bool(specs))
         if plan is None:
             return
         self.save()
@@ -4375,6 +5106,11 @@ class ImageStudio:
             "auto_neg": self.v_auto_neg.get(), "save_base": self.v_save_base.get(),
             "lora_specs": specs, "cards": cards, "lora_skipped": skipped,
         }
+        if remote:
+            params.update(remote={"host": self.remote["host"], "key": self.remote["key"]}, model_info=m,
+                          remote_loras=list(self.remote.get("loras") or []))
+            self.start_job("generate", self.job_generate_remote, params)
+            return
         self.start_job("generate", self.job_generate, params)
 
     def _prepare_prompt(self, p, m):
@@ -4501,16 +5237,8 @@ class ImageStudio:
             self.log(t("log_lora_off"))
             specs = []
         pos, neg, aspect, orient, creat = self._prepare_prompt(p, m)
-        lead = [core.lora_trigger_text(sp[3]) for sp in specs] + [c.get("style", "") for c in p.get("cards") or []]
-        lead = [x for x in lead if x]
-        if lead:
-            pos = core.merge_prompt_lists(", ".join(lead), pos)
-        if m["neg"]:
-            avoid = ", ".join(c.get("avoid", "") for c in p.get("cards") or [] if c.get("avoid"))
-            if avoid:
-                neg = core.merge_prompt_lists(neg, avoid)
-        if m["neg"] and p["auto_neg"]:
-            neg = core.merge_prompt_lists(neg, core.ANATOMY_NEGATIVE)
+        if not p.get("raw_prompt"):          # ağdaki istemci tetikleyicileri ve negatifleri kendisi ekleyip gönderir
+            pos, neg = self._merge_prompt_extras(m, p, specs, pos, neg)
         if p["show_prompt"]:
             r = self.call_ui(self._preview_dialog, pos, neg, m)
             if not r or not r.get("ok"):
@@ -4520,8 +5248,12 @@ class ImageStudio:
         res = p["res"] if p["res"] != "auto" else "normal"
         quality = p["quality"] if p["quality"] != "auto" else "balanced"
         w, h = core.compute_size(m["base_px"], aspect, orient, res)
+        if p.get("size"):                    # ağdan gelen istek kesin boyut verebilir
+            w, h = core.snap_size(m, *p["size"])
         steps = core.resolve_steps(m, quality, p["steps_manual"])
         cfg = core.creativity_to_cfg(creat) if m["cfg"] else m["fixed_cfg"]
+        if p.get("cfg") is not None and m["cfg"]:
+            cfg = max(1.0, min(20.0, float(p["cfg"])))
         profile = self.effective_profile(m)
         path = core.image_model_dir(self.paths.models, m)
         os.makedirs(p["outdir"], exist_ok=True)
@@ -4635,8 +5367,24 @@ class ImageStudio:
             out_path = self._save_image(stage["img"], p["outdir"], m, seed, meta)
             self.log(t("log_saved", path=out_path, sec=time.time() - t0))
             self.post(self.add_to_gallery, out_path, meta, True)
+            if p.get("_collect") is not None:
+                p["_collect"].append((out_path, meta))
         self.progress(100)
         self.status("status_done")
+
+    def _merge_prompt_extras(self, m, p, specs, pos, neg):
+        """LoRA tetikleyicileri + stil kartları (pozitif), kart kaçınmaları + anatomi negatifleri (negatif)."""
+        lead = [core.lora_trigger_text(sp[3]) for sp in specs] + [c.get("style", "") for c in p.get("cards") or []]
+        lead = [x for x in lead if x]
+        if lead:
+            pos = core.merge_prompt_lists(", ".join(lead), pos)
+        if m["neg"]:
+            avoid = ", ".join(c.get("avoid", "") for c in p.get("cards") or [] if c.get("avoid"))
+            if avoid:
+                neg = core.merge_prompt_lists(neg, avoid)
+        if m["neg"] and p["auto_neg"]:
+            neg = core.merge_prompt_lists(neg, core.ANATOMY_NEGATIVE)
+        return pos, neg
 
     def _gen_meta(self, m, p, pos, neg, seed, steps, cfg, w, h, aspect, orient, profile, quality, stage):
         img = stage["img"]
@@ -5385,6 +6133,7 @@ class ImageStudio:
     def on_close(self):
         self.abort.set()
         self.save()
+        self.stop_api_server(quiet=True)
         self._cancel_shutdown()
         try:
             self.engine.unload()
