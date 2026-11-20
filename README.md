@@ -19,6 +19,9 @@ your own language into English prompts. The interface is available in **English,
   - Build datasets from folders, files and **videos** (sharp, varied frames are picked automatically) or, if you allow
     it, from openly licensed images (Openverse). Files are named after the dataset (`istanbul_street_0001.jpg`).
   - Images without a description are **captioned automatically** (Florence-2).
+  - **Collage / split-screen check:** images that contain several pictures (collages, split-screen video frames)
+    are detected and you are asked whether to leave them out — otherwise the model learns to draw split images.
+    Removed files are moved to the dataset's `excluded` folder, never deleted.
   - Choose **what to teach**: 🎨 style, 🏙️ place / city, 🧸 subject / object / character, 🧍 human anatomy / pose,
     👤 face. Each type trains differently. In *place* mode faces are blurred and not learned, so the surroundings
     come first; in *face* mode only the face is learned.
@@ -61,7 +64,7 @@ Everything the program downloads goes into the data folder:
 
 ## 📜 Licenses
 
-The source code in this repository is licensed under the **[Apache License 2.0](LICENSE)**.
+The source code in this folder is licensed under the **[Apache License 2.0](../LICENSE)**.
 
 Models and third-party components are downloaded separately and keep their own licenses:
 
