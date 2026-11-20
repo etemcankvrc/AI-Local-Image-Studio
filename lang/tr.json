@@ -557,5 +557,22 @@
   "v2_collage_cancel": "İptal: eğitimi şimdi başlatma",
   "v2_log_collage_out": "Kolaj gibi görünen {n} görsel veri setinden çıkarıldı (taşındığı yer: {folder})",
   "v2_log_collage_kept": "Kolaj gibi görünen {n} görsel, seçiminle veri setinde bırakıldı.",
-  "v2_log_collage_cancel": "Eğitim başlatılmadı."
+  "v2_log_collage_cancel": "Eğitim başlatılmadı.",
+  "desc_custom": "📦 Kendi modelin (tek dosya) — lisansı senin sorumluluğunda",
+  "log_custom_skip": "📦 '{name}' model olarak eklenmedi: {why}",
+  "custom_why_unsafe": ".ckpt / .pt dosyaları kod içerebilir ve hiç açılmaz — modelin .safetensors sürümünü kullanın",
+  "custom_why_sd2": "SD 2.x modelleri desteklenmiyor",
+  "custom_why_flux": "tek dosyalık FLUX modelleri henüz desteklenmiyor",
+  "custom_why_sd3": "SD 3 modelleri desteklenmiyor",
+  "custom_why_refiner": "SDXL refiner tek başına çalışan bir model değil",
+  "custom_why_inpaint": "inpainting (boyama) modelleri desteklenmiyor",
+  "custom_why_novae": "dosyada VAE yok (eksik model)",
+  "custom_why_broken": "dosya bozuk ya da yarım inmiş",
+  "custom_why_unknown": "SD 1.5 / SDXL modeli olarak tanınmadı",
+  "custom_why_other": "bu model türü desteklenmiyor",
+  "log_custom_misplaced": "📦 '{name}' LoRA değil, tam model. Olduğu yerde de çalışır ama yeri şurası: {folder}",
+  "custom_license_q": "Kendi eklediğin bir modeli kullanıyorsun.\n\nProgram bu modelin lisansını kontrol edemez: bazı modeller ticari kullanıma kapalıdır ya da başka koşulları vardır. Lisansı ve görselleri nasıl kullandığını kontrol etmek senin sorumluluğunda.\n\nDevam edilsin mi? (bir daha sorulmaz)",
+  "custom_cfg_name": "{base} ayar dosyaları (model ağırlığı yok)",
+  "log_custom_cfg": "{base} için küçük ayar dosyaları indiriliyor (yapı, zamanlayıcı, sözlük — ağırlık yok)…",
+  "log_custom_missing": "Model dosyası artık yerinde değil: {path}"
 }

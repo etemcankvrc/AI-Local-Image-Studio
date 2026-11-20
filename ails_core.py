@@ -178,6 +178,10 @@ class DataPaths:
     def ensure_dirs(self):
         for d in (self.runtime, self.models, self.outputs, self.cache, self.hf_home, self.tmp, self.logs):
             os.makedirs(d, exist_ok=True)
+        try:
+            os.makedirs(os.path.join(self.root, "addons", "models"), exist_ok=True)   # kullanıcının kendi modelleri
+        except OSError:
+            pass
 
     def env(self):
         """Program ve alt süreçleri (pip vb.) için ortam: önbellek ve geçici dosyalar da seçilen diske."""
@@ -655,6 +659,11 @@ IMAGE_MODELS = [
 ]
 IMAGE_MODEL_BY_KEY = {m["key"]: m for m in IMAGE_MODELS}
 
+
+def model_family(model):
+    """Modelin mimarisi: programın modellerinde anahtarın kendisi, kullanıcının eklediği modelde 'sd15' / 'sdxl'."""
+    return model.get("family") or model["key"]
+
 # Ollama LLM'leri — hepsi Apache-2.0 (Qwen2.5'in 3B/72B sürümleri farklı lisanslı olduğu için listede yok).
 LLM_MODELS = [
     {"key": "qwen3:4b", "name": "Qwen3 4B", "size": "~2.5 GB", "size_gb": 2.5, "license": "Apache-2.0", "vram": 3.5, "desc": "desc_qwen3_4b"},
@@ -709,9 +718,9 @@ def hires_enabled(mode, model, quality, profile):
         return True
     if profile == "cpu":
         return False
-    if model["key"] == "sd15":
+    if model_family(model) == "sd15":
         return quality in ("balanced", "detailed", "ultra")
-    if model["key"] == "sdxl":
+    if model_family(model) == "sdxl":
         return quality == "ultra" and profile in ("full", "normal")
     return False
 
@@ -745,6 +754,8 @@ MARKER = ".ails_complete.json"
 
 
 def image_model_dir(models_root, model):
+    if model.get("custom"):
+        return model["file"]          # kullanıcının modeli tek dosyadır
     return os.path.join(models_root, "image", model["key"])
 
 
@@ -753,6 +764,8 @@ def upscaler_path(models_root):
 
 
 def is_image_model_installed(models_root, model):
+    if model.get("custom"):
+        return os.path.isfile(model["file"])
     return os.path.exists(os.path.join(image_model_dir(models_root, model), MARKER))
 
 
@@ -2414,10 +2427,11 @@ class ImageEngine:
             except BaseException as e:  # noqa
                 raise EngineBrokenError(f"diffusers: {type(e).__name__}: {str(e)[:200]}") from e
 
-            with open(os.path.join(path, "model_index.json"), encoding="utf-8") as f:
-                cls_name = json.load(f).get("_class_name", "")
-            if cls_name and not hasattr(diffusers, cls_name):
-                raise EngineBrokenError(f"diffusers {getattr(diffusers, '__version__', '?')} lacks {cls_name}")
+            if not model.get("custom"):
+                with open(os.path.join(path, "model_index.json"), encoding="utf-8") as f:
+                    cls_name = json.load(f).get("_class_name", "")
+                if cls_name and not hasattr(diffusers, cls_name):
+                    raise EngineBrokenError(f"diffusers {getattr(diffusers, '__version__', '?')} lacks {cls_name}")
 
             on_gpu = profile != "cpu" and hw.cuda_usable
             if model["dtype"] == "fp16":
@@ -2427,14 +2441,17 @@ class ImageEngine:
             kwargs = dict(torch_dtype=dtype)
             kwargs.update(model.get("load_kwargs", {}))
             variant = model.get("variant")
-            try:
-                pipe = DiffusionPipeline.from_pretrained(path, variant=variant, **kwargs) if variant \
-                    else DiffusionPipeline.from_pretrained(path, **kwargs)
-            except (ValueError, OSError) as e:
-                if variant and "variant" in str(e).lower():
-                    pipe = DiffusionPipeline.from_pretrained(path, **kwargs)
-                else:
-                    raise
+            if model.get("custom"):
+                pipe = load_custom_pipeline(model, kwargs)
+            else:
+                try:
+                    pipe = DiffusionPipeline.from_pretrained(path, variant=variant, **kwargs) if variant \
+                        else DiffusionPipeline.from_pretrained(path, **kwargs)
+                except (ValueError, OSError) as e:
+                    if variant and "variant" in str(e).lower():
+                        pipe = DiffusionPipeline.from_pretrained(path, **kwargs)
+                    else:
+                        raise
 
             dev = hw.device if on_gpu else "cpu"
             if profile == "full" and on_gpu:
@@ -2533,7 +2550,7 @@ class ImageEngine:
                 elif name == "dpmpp_2m_karras":
                     sch = diffusers.DPMSolverMultistepScheduler.from_config(
                         cfg, use_karras_sigmas=True, algorithm_type="dpmsolver++", solver_order=2,
-                        euler_at_final=(model["key"] == "sdxl"))
+                        euler_at_final=(model_family(model) == "sdxl"))
                 elif name == "euler_a":
                     sch = diffusers.EulerAncestralDiscreteScheduler.from_config(cfg)
                 elif name == "euler":
@@ -4179,6 +4196,205 @@ def _top_tags(meta, n=4):
         return ""
 
 
+# =============================================================================
+# Kullanıcının eklediği ana modeller (checkpoint) — addons\models\ (ya da yanlışlıkla addons\ içine konanlar)
+# Program bunları İNDİRMEZ; yalnızca kullanıcının koyduğu .safetensors dosyalarını okur. .ckpt/.pt (pickle,
+# içinde kod çalıştırabilir) hiç açılmaz. Desteklenen mimariler: SD 1.5 ve SDXL.
+# =============================================================================
+CUSTOM_MODELS_SUBDIR = "models"
+CUSTOM_PREFIX = "custom:"
+CUSTOM_FAMILIES = ("sd15", "sdxl")
+UNSAFE_MODEL_EXTS = (".ckpt", ".pt", ".pth", ".bin")
+_LORA_MARKERS = ("lora_down", "lora_up", "lora_a.", "lora_b.", ".lora.", "lora_te", "lora_unet", "hada_w",
+                 "lokr_w", ".oft_", "lora_mid")
+_custom_cache = {}     # yol -> (boyut, değişiklik zamanı, sınıflandırma)
+
+
+def custom_models_dir(paths):
+    return os.path.join(addons_dir(paths), CUSTOM_MODELS_SUBDIR)
+
+
+def classify_safetensors(meta, shapes):
+    """
+    (tür, ayrıntı) — tür: 'lora' | 'sd15' | 'sdxl' | 'unsupported' | 'unknown'.
+    'unsupported' için ayrıntı: 'sd2' | 'refiner' | 'inpaint' | 'flux' | 'sd3' | 'other' | 'novae'.
+    """
+    keys = [k.lower() for k in shapes]
+    if any(m in k for k in keys for m in _LORA_MARKERS):
+        return "lora", ""
+    has_unet = any(k.startswith("model.diffusion_model.") for k in keys)
+    if not has_unet:
+        if any(("double_blocks" in k or "single_blocks" in k) for k in keys):
+            return "unsupported", "flux"
+        if any(k.startswith(("transformer.", "diffusion_model.", "model.diffusion_model.joint_blocks")) for k in keys):
+            return "unsupported", "other"
+        return "unknown", ""
+    low = {k.lower(): v for k, v in shapes.items()}
+    if any("double_blocks" in k or "single_blocks" in k for k in keys):
+        return "unsupported", "flux"
+    if any("joint_blocks" in k for k in keys):
+        return "unsupported", "sd3"
+    conv_in = low.get("model.diffusion_model.input_blocks.0.0.weight") or []
+    if len(conv_in) >= 2 and int(conv_in[1]) != 4:
+        return "unsupported", "inpaint"
+    if not any(k.startswith(("first_stage_model.", "vae.")) for k in keys):
+        return "unsupported", "novae"
+    if any(k.startswith("conditioner.embedders.1.") for k in keys):
+        return "sdxl", ""
+    if any(k.startswith("conditioner.embedders.0.") for k in keys):
+        return "unsupported", "refiner"
+    if any(k.startswith("cond_stage_model.model.") for k in keys):
+        return "unsupported", "sd2"
+    if any(k.startswith("cond_stage_model.transformer.") for k in keys):
+        for k, shp in low.items():
+            if "attn2.to_k.weight" in k and shp and len(shp) == 2:
+                return ("unsupported", "sd2") if int(shp[1]) == 1024 else ("sd15", "")
+        return "sd15", ""
+    return "unknown", ""
+
+
+def _classify_file(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return "unknown", ""
+    sig = (st.st_size, int(st.st_mtime))
+    hit = _custom_cache.get(path)
+    if hit and hit[0] == sig:
+        return hit[1]
+    try:
+        meta, shapes = read_safetensors_header(path)
+        res = classify_safetensors(meta, shapes)
+    except Exception:
+        res = ("unknown", "broken")
+    _custom_cache[path] = (sig, res)
+    return res
+
+
+def scan_custom_models(paths, limit=200):
+    """
+    addons\\models\\ (alt klasörler dahil) ve addons\\ kökündeki tam modeller.
+    Dönüş: (modeller, atlananlar) — atlananlar: [(dosya adı, neden)], neden: unsafe | sd2 | flux | … | unknown.
+    """
+    found, skipped = [], []
+    seen = set()
+    cands = []
+    md = custom_models_dir(paths)
+    if os.path.isdir(md):
+        for root, dirs, files in os.walk(md):
+            dirs[:] = sorted(x for x in dirs if not x.startswith("."))
+            cands += [os.path.join(root, f) for f in sorted(files)]
+    ad = addons_dir(paths)
+    if os.path.isdir(ad):
+        cands += [os.path.join(ad, f) for f in sorted(os.listdir(ad)) if f.lower().endswith(".safetensors")]
+    for p in cands[:limit * 4]:
+        low = p.lower()
+        in_models = os.path.normpath(os.path.dirname(p)).startswith(os.path.normpath(md))
+        if low.endswith(UNSAFE_MODEL_EXTS) and in_models:
+            skipped.append((os.path.basename(p), "unsafe"))
+            continue
+        if not low.endswith(".safetensors") or not os.path.isfile(p):
+            continue
+        kind, why = _classify_file(p)
+        if kind in CUSTOM_FAMILIES:
+            rel = os.path.relpath(p, ad).replace("\\", "/")
+            if rel in seen:
+                continue
+            seen.add(rel)
+            found.append(_custom_model_entry(paths, p, rel, kind))
+        elif in_models or kind == "unsupported":
+            skipped.append((os.path.basename(p), why or kind))
+        if len(found) >= limit:
+            break
+    return found, skipped
+
+
+def _custom_model_entry(paths, path, rel, family):
+    base = IMAGE_MODEL_BY_KEY[family]
+    m = dict(base)
+    m.update({
+        "key": CUSTOM_PREFIX + rel, "name": os.path.splitext(os.path.basename(path))[0], "family": family,
+        "custom": True, "file": path, "repo": None, "variant": None, "license": "—", "desc": "desc_custom",
+        "size_gb": round(os.path.getsize(path) / GB, 2), "models_root": paths.models,
+        "misplaced": os.path.normpath(os.path.dirname(path)) == os.path.normpath(addons_dir(paths)),
+        "load_kwargs": dict(base.get("load_kwargs", {})),
+    })
+    return m
+
+
+def refresh_custom_models(paths):
+    """Kullanıcı modellerini IMAGE_MODEL_BY_KEY'e işler (eskiler çıkarılır). Dönüş: (modeller, atlananlar)."""
+    found, skipped = scan_custom_models(paths)
+    for k in [k for k in IMAGE_MODEL_BY_KEY if k.startswith(CUSTOM_PREFIX)]:
+        del IMAGE_MODEL_BY_KEY[k]
+    for m in found:
+        IMAGE_MODEL_BY_KEY[m["key"]] = m
+    return found, skipped
+
+
+def custom_config_dir(models_root, family):
+    """
+    Tek dosyalık modeli açmak için gereken ayar dosyaları (model ağırlığı değil): aynı mimarideki programın modeli
+    kuruluysa onun klasörü, değilse küçük ayar paketi (models\\configs\\<mimari>). İkisi de yoksa None.
+    """
+    base = IMAGE_MODEL_BY_KEY[family]
+    if is_image_model_installed(models_root, base):
+        return image_model_dir(models_root, base)
+    d = os.path.join(models_root, "configs", family)
+    return d if os.path.exists(os.path.join(d, MARKER)) else None
+
+
+CONFIG_PACK_SIZE = "~4 MB"
+
+
+def download_model_config(models_root, family, progress_cb=None, abort_event=None):
+    """Yalnızca ayar dosyaları (json/txt: yapı, zamanlayıcı, sözlük) — birkaç MB, ağırlık yok."""
+    from huggingface_hub import snapshot_download
+    base = IMAGE_MODEL_BY_KEY[family]
+    dest = os.path.join(models_root, "configs", family)
+    os.makedirs(dest, exist_ok=True)
+    result = {"err": None}
+
+    def _run():
+        try:
+            snapshot_download(base["repo"], local_dir=dest, allow_patterns=["model_index.json", "*/*.json", "*/*.txt"],
+                              ignore_patterns=["*.safetensors", "*.bin", "*.ckpt", "*.onnx*", "*.msgpack", "*.h5"],
+                              max_workers=2)
+        except Exception as e:  # noqa
+            result["err"] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    while t.is_alive():
+        t.join(0.5)
+        if progress_cb:
+            progress_cb(folder_size_bytes(dest), 4 * MB)
+        if abort_event is not None and abort_event.is_set():
+            raise AbortedError("user")
+    if result["err"] is not None:
+        raise result["err"]
+    if not os.path.exists(os.path.join(dest, "model_index.json")):
+        raise RuntimeError("model_index.json missing — config download incomplete")
+    with open(os.path.join(dest, MARKER), "w", encoding="utf-8") as f:
+        json.dump({"repo": base["repo"], "config_only": True, "date": time.strftime("%Y-%m-%d %H:%M")}, f)
+    return dest
+
+
+class CustomModelConfigMissing(RuntimeError):
+    pass
+
+
+def load_custom_pipeline(model, kwargs):
+    """Tek dosyalık SD 1.5 / SDXL modelini ağ kullanmadan açar (ayarlar yerel klasörden)."""
+    import diffusers
+    family = model["family"]
+    cfg = custom_config_dir(model["models_root"], family)
+    if not cfg:
+        raise CustomModelConfigMissing(family)
+    cls = diffusers.StableDiffusionXLPipeline if family == "sdxl" else diffusers.StableDiffusionPipeline
+    return cls.from_single_file(model["file"], config=cfg, local_files_only=True, **kwargs)
+
+
 def scan_loras(paths):
     """Tüm LoRA'lar ve stil kartları. Kendi ürettiklerimizin yanında aynı adlı .json bilgi dosyası bulunur."""
     out = []
@@ -4186,7 +4402,9 @@ def scan_loras(paths):
         if not os.path.isdir(d):
             continue
         for root, dirs, files in os.walk(d):
-            dirs[:] = sorted(x for x in dirs if not x.endswith("_samples") and not x.startswith("."))
+            dirs[:] = sorted(x for x in dirs if not x.endswith("_samples") and not x.startswith(".") and
+                             not (origin == "external" and os.path.normpath(root) == os.path.normpath(d) and
+                                  x.lower() == CUSTOM_MODELS_SUBDIR))
             for fn in sorted(files):
                 if len(out) >= LORA_MAX_FILES:
                     return out
@@ -4214,6 +4432,9 @@ def scan_loras(paths):
                             info = {}
                     try:
                         meta, shapes = read_safetensors_header(p)
+                        if origin == "external" and classify_safetensors(meta, shapes)[0] in \
+                                CUSTOM_FAMILIES + ("unsupported",):
+                            continue      # tam model (checkpoint) LoRA değildir: model listesinde görünür
                         base = info.get("base") or detect_lora_base(meta, shapes)
                     except Exception:
                         meta, base = {}, "unknown"

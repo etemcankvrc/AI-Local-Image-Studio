@@ -557,5 +557,22 @@
   "v2_collage_cancel": "취소: 지금은 학습을 시작하지 않음",
   "v2_log_collage_out": "콜라주처럼 보이는 이미지 {n}개를 데이터셋에서 제외했습니다 (이동 위치: {folder})",
   "v2_log_collage_kept": "콜라주처럼 보이는 이미지 {n}개를 선택에 따라 유지했습니다.",
-  "v2_log_collage_cancel": "학습을 시작하지 않았습니다."
+  "v2_log_collage_cancel": "학습을 시작하지 않았습니다.",
+  "desc_custom": "📦 직접 추가한 모델 (단일 파일) — 라이선스는 사용자 책임",
+  "log_custom_skip": "📦 '{name}'은(는) 모델로 추가되지 않았습니다: {why}",
+  "custom_why_unsafe": ".ckpt / .pt 파일은 코드를 포함할 수 있어 열지 않습니다 — .safetensors 버전을 사용하세요",
+  "custom_why_sd2": "SD 2.x 모델은 지원되지 않습니다",
+  "custom_why_flux": "단일 파일 FLUX 모델은 아직 지원되지 않습니다",
+  "custom_why_sd3": "SD 3 모델은 지원되지 않습니다",
+  "custom_why_refiner": "SDXL 리파이너는 단독으로 쓰는 모델이 아닙니다",
+  "custom_why_inpaint": "인페인팅 모델은 지원되지 않습니다",
+  "custom_why_novae": "파일에 VAE가 없습니다 (불완전한 모델)",
+  "custom_why_broken": "파일이 손상되었거나 일부만 다운로드되었습니다",
+  "custom_why_unknown": "SD 1.5 / SDXL 모델로 인식되지 않았습니다",
+  "custom_why_other": "이 모델 형식은 지원되지 않습니다",
+  "log_custom_misplaced": "📦 '{name}'은(는) LoRA가 아니라 전체 모델입니다. 지금 위치에서도 작동하지만 원래 위치는 여기입니다: {folder}",
+  "custom_license_q": "직접 추가한 모델을 사용하고 있습니다.\n\n프로그램은 이 모델의 라이선스를 확인할 수 없습니다. 일부 모델은 상업적 사용을 허용하지 않거나 다른 조건이 있습니다. 라이선스와 이미지 사용 방식을 확인하는 것은 사용자의 책임입니다.\n\n계속할까요? (다시 묻지 않음)",
+  "custom_cfg_name": "{base} 설정 파일 (모델 가중치 없음)",
+  "log_custom_cfg": "{base}용 작은 설정 파일을 받는 중 (구조, 스케줄러, 토크나이저 — 가중치 없음)…",
+  "log_custom_missing": "모델 파일이 더 이상 없습니다: {path}"
 }

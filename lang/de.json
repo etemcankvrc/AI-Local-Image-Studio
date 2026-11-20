@@ -557,5 +557,22 @@
   "v2_collage_cancel": "Abbrechen: Training jetzt nicht starten",
   "v2_log_collage_out": "{n} collageartige(s) Bild(er) aus dem Datensatz entfernt (verschoben nach: {folder})",
   "v2_log_collage_kept": "{n} collageartige(s) Bild(er) auf Wunsch behalten.",
-  "v2_log_collage_cancel": "Das Training wurde nicht gestartet."
+  "v2_log_collage_cancel": "Das Training wurde nicht gestartet.",
+  "desc_custom": "📦 Eigenes Modell (eine Datei) — die Lizenz liegt in deiner Verantwortung",
+  "log_custom_skip": "📦 '{name}' wurde nicht als Modell hinzugefügt: {why}",
+  "custom_why_unsafe": ".ckpt- / .pt-Dateien können Code enthalten und werden nie geöffnet — nimm die .safetensors-Version",
+  "custom_why_sd2": "SD-2.x-Modelle werden nicht unterstützt",
+  "custom_why_flux": "FLUX-Modelle als Einzeldatei werden noch nicht unterstützt",
+  "custom_why_sd3": "SD-3-Modelle werden nicht unterstützt",
+  "custom_why_refiner": "der SDXL-Refiner ist kein eigenständiges Modell",
+  "custom_why_inpaint": "Inpainting-Modelle werden nicht unterstützt",
+  "custom_why_novae": "die Datei enthält kein VAE (unvollständiges Modell)",
+  "custom_why_broken": "die Datei ist beschädigt oder nur teilweise heruntergeladen",
+  "custom_why_unknown": "nicht als SD-1.5- / SDXL-Modell erkannt",
+  "custom_why_other": "dieser Modelltyp wird nicht unterstützt",
+  "log_custom_misplaced": "📦 '{name}' ist ein vollständiges Modell, keine LoRA. Es funktioniert auch dort, gehört aber hierhin: {folder}",
+  "custom_license_q": "Du verwendest ein selbst hinzugefügtes Modell.\n\nDas Programm kann seine Lizenz nicht prüfen: Manche Modelle erlauben keine kommerzielle Nutzung oder haben andere Bedingungen. Die Lizenz und die Nutzung der Bilder zu prüfen, liegt in deiner Verantwortung.\n\nFortfahren? (wird nicht erneut gefragt)",
+  "custom_cfg_name": "Einstellungsdateien für {base} (keine Modellgewichte)",
+  "log_custom_cfg": "Kleine Einstellungsdateien für {base} werden geladen (Aufbau, Scheduler, Tokenizer — keine Gewichte)…",
+  "log_custom_missing": "Die Modelldatei ist nicht mehr vorhanden: {path}"
 }

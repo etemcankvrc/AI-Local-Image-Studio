@@ -620,6 +620,30 @@ EN = {
     "v2_deep_note_face": "Only the face (with hair) is cut out of each image and learned; background and clothes are barely learned. Images without a detected face are skipped.",
     "v2_face_consent_q": "Face mode learns what a person looks like.\n\nAre these faces yours, people who agreed to it, or fictional characters? Do not use it to imitate real people without their consent.\n\nYes: continue (not asked again for this dataset)",
     "tr_log_face_mode": "👤 Face found and cut out in {n} image(s); {skipped} image(s) without a face were skipped.",
+    "v2_status_collage": "Checking images for collages…",
+    "v2_prog_collage": "Checking layout {a}/{b}",
+    "v2_collage_q": "{n} image(s) look like a collage or split screen (several pictures in one image):\n{names}\n\nThe model would learn this layout too and start drawing split images.\n\nRemove them from training?\nYes: remove (the files are moved to the dataset's 'excluded' folder, not deleted)\nNo: keep them (you won't be asked about these again)",
+    "v2_collage_cancel": "Cancel: don't start training now",
+    "v2_log_collage_out": "{n} collage-like image(s) removed from the dataset (moved to: {folder})",
+    "v2_log_collage_kept": "{n} collage-like image(s) kept, as you chose.",
+    "v2_log_collage_cancel": "Training was not started.",
+    "desc_custom": "📦 Your own model (single file) — its license is your responsibility",
+    "log_custom_skip": "📦 '{name}' was not added as a model: {why}",
+    "custom_why_unsafe": ".ckpt / .pt files can contain code and are never opened — use the .safetensors version",
+    "custom_why_sd2": "SD 2.x models are not supported",
+    "custom_why_flux": "single-file FLUX models are not supported yet",
+    "custom_why_sd3": "SD 3 models are not supported",
+    "custom_why_refiner": "the SDXL refiner is not a standalone model",
+    "custom_why_inpaint": "inpainting models are not supported",
+    "custom_why_novae": "the file has no VAE (incomplete model)",
+    "custom_why_broken": "the file is damaged or only partly downloaded",
+    "custom_why_unknown": "not recognised as an SD 1.5 / SDXL model",
+    "custom_why_other": "this model type is not supported",
+    "log_custom_misplaced": "📦 '{name}' is a full model, not a LoRA. It works where it is, but its place is: {folder}",
+    "custom_license_q": "You are using a model you added yourself.\n\nThe program cannot check its license: some models do not allow commercial use or have other conditions. Checking the license and how you use the images is your responsibility.\n\nContinue? (not asked again)",
+    "custom_cfg_name": "Settings files for {base} (no model weights)",
+    "log_custom_cfg": "Downloading the small settings files for {base} (structure, scheduler, tokenizer — no weights)…",
+    "log_custom_missing": "The model file is no longer there: {path}",
 }
 
 
@@ -738,6 +762,10 @@ V2_DEFAULTS = {
 
 def load_settings(paths):
     s = dict(DEFAULT_SETTINGS)
+    try:
+        core.refresh_custom_models(paths)        # kayıtlı seçim kullanıcının modeli olabilir
+    except Exception:
+        pass
     data, from_new = None, False
     for p, is_new in ((paths.settings, True), (os.path.join(APP_DIR, "settings.json"), False)):
         try:
@@ -2575,7 +2603,7 @@ class LoraPickerWindow:
         self.tree.delete(*self.tree.get_children())
         shown = 0
         for it in self.items:
-            comp = core.lora_compat(it["base"], m["key"])
+            comp = core.lora_compat(it["base"], core.model_family(m))
             if flt == "compatible" and comp == "no":
                 continue
             if flt == "own" and not (it["origin"] == "own" and it["kind"] == "lora"):
@@ -2608,7 +2636,7 @@ class LoraPickerWindow:
             shown += 1
         own = sum(1 for i in self.items if i["origin"] == "own")
         note = t("lp_note", own=own, ext=len(self.items) - own, shown=shown)
-        hidden = sum(1 for i in self.items if core.lora_compat(i["base"], m["key"]) == "no")
+        hidden = sum(1 for i in self.items if core.lora_compat(i["base"], core.model_family(m)) == "no")
         if flt == "compatible" and hidden:
             note += "  " + t("lp_hidden", n=hidden)
         if not core.peft_installed(self.paths):
@@ -3123,7 +3151,32 @@ class ImageStudio:
         for m in core.IMAGE_MODELS:
             ok = core.is_image_model_installed(self.paths.models, m)
             out.append((m["key"], f"{'✔' if ok else '⬇'} {m['name']}" + ("" if ok else "  " + t("not_installed"))))
+        try:
+            found, skipped = core.refresh_custom_models(self.paths)
+        except Exception:
+            self._write_file_log(traceback.format_exc())
+            found, skipped = [], []
+        for m in found:
+            out.append((m["key"], f"📦 {m['name']}  [{core.BASE_LABELS.get(m['family'], m['family'])}]"))
+        self._note_custom_models(found, skipped)
         return out
+
+    def _note_custom_models(self, found, skipped):
+        """Kullanıcı modelleriyle ilgili notlar (her dosya için oturumda bir kez): atlananlar ve yanlış klasördekiler."""
+        if not hasattr(self, "txt_log"):          # açılışta log alanı henüz kurulmadı
+            self.r.after(800, lambda: self._note_custom_models(found, skipped))
+            return
+        seen = self.__dict__.setdefault("_custom_noted", set())
+        for name, why in skipped:
+            if ("skip", name) not in seen:
+                seen.add(("skip", name))
+                self.log(t("log_custom_skip", name=name, why=t("custom_why_" + why) if ("custom_why_" + why) in EN
+                           else t("custom_why_unknown")))
+        for m in found:
+            if m.get("misplaced") and ("move", m["key"]) not in seen:
+                seen.add(("move", m["key"]))
+                self.log(t("log_custom_misplaced", name=os.path.basename(m["file"]),
+                           folder=core.custom_models_dir(self.paths)))
 
     def _host_names(self):
         return self.llm_installed.get(self.v_llm_host.get(), [])
@@ -3561,7 +3614,18 @@ class ImageStudio:
             dl, disk = core.ENGINE_SIZE[core.engine_kind(self.hw)]
             items.append((t("engine_name"), t("engine_size", dl=dl, disk=disk), self.paths.runtime))
             plan["engine"] = True
-        if model and not core.is_image_model_installed(self.paths.models, model):
+        if model and model.get("custom"):
+            if not self.st.get("custom_license_ok"):
+                if not messagebox.askyesno(APP_NAME, t("custom_license_q"), parent=self.r):
+                    return None
+                self.st["custom_license_ok"] = True
+                self.save()
+            if not core.custom_config_dir(self.paths.models, model["family"]):
+                base = core.IMAGE_MODEL_BY_KEY[model["family"]]
+                items.append((t("custom_cfg_name", base=base["name"]), core.CONFIG_PACK_SIZE,
+                              os.path.join(self.paths.models, "configs", model["family"])))
+                plan["model_config"] = True
+        elif model and not core.is_image_model_installed(self.paths.models, model):
             items.append((model["name"], f"~{model['size_gb']:.1f} GB", os.path.join(self.paths.models, "image")))
             plan["model"] = True
         if upscaler and not core.is_upscaler_installed(self.paths.models):
@@ -3721,11 +3785,11 @@ class ImageStudio:
             if it["kind"] == "card":
                 cards.append(it)
                 continue
-            if core.lora_compat(it["base"], m["key"]) == "no":
+            if core.lora_compat(it["base"], core.model_family(m)) == "no":
                 skipped.append((it["name"], "incompatible"))
                 continue
             specs.append((it["id"], it["path"], float(sel.get("w", 0.8)), it))
-        if self.v_pref_auto.get() and m["key"] == "sd15":
+        if self.v_pref_auto.get() and core.model_family(m) == "sd15":
             pref = os.path.join(core.own_lora_dir(self.paths), core.PREF_LORA_NAME + ".safetensors")
             if os.path.exists(pref) and not any(sp[1] == pref for sp in specs):
                 it = items.get("own:" + core.PREF_LORA_NAME + ".safetensors") or \
@@ -3753,7 +3817,7 @@ class ImageStudio:
             if it["kind"] == "card":
                 parts.append("📝 " + it["name"])
                 continue
-            comp = core.lora_compat(it["base"], m["key"])
+            comp = core.lora_compat(it["base"], core.model_family(m))
             mark = "⚠ " if comp == "no" else (core.learn_icon(it["learn"]) + " " if it.get("learn") else "")
             bad = bad or comp == "no"
             parts.append(f"{mark}{it['name']} ({x['w']:.2f})")
@@ -4161,7 +4225,17 @@ class ImageStudio:
             if not plan.get("engine"):
                 raise JobFail()
             self._install_engine()
-        if not core.is_image_model_installed(self.paths.models, m):
+        if m.get("custom"):
+            if not core.is_image_model_installed(self.paths.models, m):
+                self.log(t("log_custom_missing", path=m["file"]))
+                raise JobFail()
+            if not core.custom_config_dir(self.paths.models, m["family"]):
+                if not plan.get("model_config"):
+                    raise JobFail()
+                self.status("status_download")
+                self.log(t("log_custom_cfg", base=core.IMAGE_MODEL_BY_KEY[m["family"]]["name"]))
+                core.download_model_config(self.paths.models, m["family"], self.bytes_progress, self.abort)
+        elif not core.is_image_model_installed(self.paths.models, m):
             if not plan.get("model"):
                 raise JobFail()
             self._download_image_model(m)
@@ -4409,7 +4483,8 @@ class ImageStudio:
             a1111 += ", LoRA: " + ", ".join(f"{x['name']}:{x['w']}" for x in meta["loras"])
         info.add_text("parameters", a1111)
         info.add_text("ails", json.dumps(meta, ensure_ascii=False))
-        name = time.strftime("%Y%m%d_%H%M%S") + f"_{m['key']}_{seed}{suffix}.png"
+        tag = core.safe_folder_name(m["name"], "model")[:40] if m.get("custom") else m["key"]
+        name = time.strftime("%Y%m%d_%H%M%S") + f"_{tag}_{seed}{suffix}.png"
         path = os.path.join(outdir, name)
         core.check_space(outdir, 0.05)
         img.save(path, pnginfo=info)
@@ -4841,7 +4916,7 @@ class ImageStudio:
                 lbl_fix.config(text=t("adv_fix_missing", size=core.DETAILER["size"]), fg=WARN)
             chk_neg.config(state="normal" if m["neg"] else "disabled")
             pref = os.path.join(core.own_lora_dir(self.paths), core.PREF_LORA_NAME + ".json")
-            if m["key"] != "sd15":
+            if core.model_family(m) != "sd15":
                 lbl_pref.config(text=t("adv_pref_sd15_only"), fg="#888888")
             elif os.path.exists(pref):
                 try:

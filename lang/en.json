@@ -557,5 +557,22 @@
   "v2_collage_cancel": "Cancel: don't start training now",
   "v2_log_collage_out": "{n} collage-like image(s) removed from the dataset (moved to: {folder})",
   "v2_log_collage_kept": "{n} collage-like image(s) kept, as you chose.",
-  "v2_log_collage_cancel": "Training was not started."
+  "v2_log_collage_cancel": "Training was not started.",
+  "desc_custom": "📦 Your own model (single file) — its license is your responsibility",
+  "log_custom_skip": "📦 '{name}' was not added as a model: {why}",
+  "custom_why_unsafe": ".ckpt / .pt files can contain code and are never opened — use the .safetensors version",
+  "custom_why_sd2": "SD 2.x models are not supported",
+  "custom_why_flux": "single-file FLUX models are not supported yet",
+  "custom_why_sd3": "SD 3 models are not supported",
+  "custom_why_refiner": "the SDXL refiner is not a standalone model",
+  "custom_why_inpaint": "inpainting models are not supported",
+  "custom_why_novae": "the file has no VAE (incomplete model)",
+  "custom_why_broken": "the file is damaged or only partly downloaded",
+  "custom_why_unknown": "not recognised as an SD 1.5 / SDXL model",
+  "custom_why_other": "this model type is not supported",
+  "log_custom_misplaced": "📦 '{name}' is a full model, not a LoRA. It works where it is, but its place is: {folder}",
+  "custom_license_q": "You are using a model you added yourself.\n\nThe program cannot check its license: some models do not allow commercial use or have other conditions. Checking the license and how you use the images is your responsibility.\n\nContinue? (not asked again)",
+  "custom_cfg_name": "Settings files for {base} (no model weights)",
+  "log_custom_cfg": "Downloading the small settings files for {base} (structure, scheduler, tokenizer — no weights)…",
+  "log_custom_missing": "The model file is no longer there: {path}"
 }

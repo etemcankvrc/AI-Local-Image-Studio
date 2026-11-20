@@ -27,6 +27,10 @@ your own language into English prompts. The interface is available in **English,
     come first; in *face* mode only the face is learned.
   - **Light** mode saves a word card; **deep** mode trains a LoRA (SD 1.5, runs on 4 GB VRAM); **self-learning**
     learns from your 👍 / 👎 ratings and an automatic judge (Diffusion-DPO).
+- **Your own models:** drop a single-file SD 1.5 or SDXL model (`.safetensors`, e.g. from Civitai or Hugging Face)
+  into `addons\models\` and it appears in the model list as 📦. The program never downloads them; `.ckpt` / `.pt`
+  files are never opened (they can contain code). The first time, it needs either the matching built-in model or a
+  ~4 MB settings pack (no weights, asked first). Their licenses are your responsibility.
 - **LoRA picker:** LoRAs you drop into `addons\` plus the ones the program trains, with search, weights and
   compatibility checks. Deleted LoRAs go to a trash folder, existing LoRAs are never overwritten.
 
@@ -57,6 +61,7 @@ Everything the program downloads goes into the data folder:
   models\     image models, upscaler, face/hand detectors, Florence-2
   datasets\   your datasets (images, video frames, captions)
   addons\     LoRAs you add yourself (the program never downloads add-ons)
+  addons\models\  full models you add yourself (single-file SD 1.5 / SDXL .safetensors)
   loras\      LoRAs and word cards the program trained (deleted ones: loras\.trash)
   outputs\    generated images
   logs\       ails.log, setup.log

@@ -12,6 +12,18 @@
   - Çıkarılan dosyalar silinmez, veri setinin `excluded` klasörüne taşınır. Kendi klasörünüzden bağlantı olarak eklenen dosyalara hiç dokunulmaz, yalnızca veri setinden çıkarılır.
   - Algılama ek model indirmez; görüntünün ortasındaki düz, tam boy sınırlara ve tek renkli ayırıcı şeritlere bakar. Tuğla, fayans gibi desenler kolaj sayılmaz. Nadiren yanılabilir; bu yüzden dosya adları gösterilir ve karar size bırakılır.
 
+## v1.3.1'de yeni — kendi modelin
+
+- Civitai, Hugging Face ya da başka bir yerden indirdiğin **tek dosyalık SD 1.5 / SDXL modellerini** (`.safetensors`) `addons\models\` klasörüne koy. Model listesinde **📦 ad [SD 1.5]** gibi görünür.
+  - Kalite ayarları, örnekleyiciler, LoRA'lar, yüz ve el düzeltici, ikinci geçiş ve büyütme bu modellerle de çalışır.
+  - Program bu modelleri **indirmez**. Sitelere bağlantı ya da arama yoktur, yalnızca senin koyduğun dosyalar okunur.
+  - `.ckpt` / `.pt` dosyaları içlerinde kod taşıyabildiği için **hiç açılmaz**. Log'da "kullanılmadı" yazar; aynı modelin `.safetensors` sürümünü indir.
+  - Desteklenmeyenler (log'da nedeniyle yazar): SD 2.x, SDXL refiner, inpainting modelleri, tek dosyalık FLUX / SD3 modelleri, VAE'si olmayan eksik dosyalar.
+  - İlk kullanımda bir kez lisans uyarısı çıkar: bu modellerin bir kısmı ticari kullanıma kapalıdır, lisansı kontrol etmek kullanıcının sorumluluğundadır.
+  - Modeli açmak için aynı mimarideki programın modeli kuruluysa onun ayar dosyaları kullanılır. Kurulu değilse yalnızca ayar dosyalarından oluşan **~4 MB'lık bir paket** (ağırlık yok) onayınla indirilir: `models\configs\`.
+  - Tam modeli yanlışlıkla `addons\` köküne koyarsan program onu LoRA sanmaz, yine model olarak gösterir ve log'da doğru yerini söyler.
+- İngilizce arayüzde kolaj sorusunun metni görünmüyordu (yalnızca anahtar adı çıkıyordu); düzeltildi.
+
 ## v1.3.0'da yeni — yüz modu
 
 - **👤 Yüz (bir kişi ya da karakter)** türü eklendi. Mekân modunun tersidir: her görselden yalnızca yüz (saçla birlikte) kesilip öğretilir.
@@ -152,6 +164,8 @@ D:\AI Local Image Studio\
   models\           ← görsel modelleri, Real-ESRGAN ve yüz/el algılayıcı (models\detect)
   datasets\         ← veri setleri (görseller, video kareleri, açıklamalar, tür — dataset.json)
   addons\           ← kullanıcının koyduğu LoRA eklentileri (program indirmez)
+  addons\models\    ← kullanıcının koyduğu tam modeller (tek dosya SD 1.5 / SDXL .safetensors)
+  models\configs\   ← kullanıcı modelleri için ayar paketleri (gerekirse, ~4 MB, ağırlık yok)
   loras\            ← programın ürettiği LoRA'lar, kelime kartları ve örnek görseller
   feedback\         ← 👍 / 👎 puanları (ratings.jsonl)
   outputs\          ← üretilen görseller
@@ -263,10 +277,12 @@ D:\AI Local Image Studio\
 19. **v1.3.0 — yüz modu:** Kendi yüzünüzün 15–30 fotoğrafı → tür "👤 Yüz", mod "Derin" → BAŞLAT.
     - İzin sorusu bir kez çıkmalı.
     - Log'da "👤 N görselde yüz bulunup kesildi" yazmalı. LoRA penceresinde "👤 Program · Yüz" görünmeli.
-
 20. **v1.3.1 — kolaj:** İki-üç kolaj ya da bölünmüş ekran görüntüsünü normal fotoğraflarla birlikte içe aktarın.
     - İçe aktarma bitince kolajlar için soru çıkmalı. Evet → dosyalar `excluded` klasörüne taşınmalı.
     - Eğitimi başlatırken yeni kolaj varsa Evet/Hayır/İptal sorusu çıkmalı. Hayır dediklerinizi bir daha sormamalı.
+21. **v1.3.1 — kendi modelin:** Bir SD 1.5 modelini (`.safetensors`) `addons\models\` içine koyup programı açın.
+    - 4. bölümdeki model listesinde "📦 ad [SD 1.5]" görünmeli. LoRA penceresinde görünmemeli.
+    - İlk üretimde lisans uyarısı bir kez çıkmalı; görsel üretilmeli ve dosya adında modelin adı olmalı.
 
 Sorun çıkarsa veri klasöründeki `logs\ails.log` (ilk kurulumda `logs\setup.log`) dosyasını gönderin.
 
