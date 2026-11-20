@@ -40,6 +40,21 @@ your own language into English prompts. The interface is available in **English,
   ~4 MB settings pack (no weights, asked first). Their licenses are your responsibility.
 - **LoRA picker:** LoRAs you drop into `addons\` plus the ones the program trains, with search, weights and
   compatibility checks. Deleted LoRAs go to a trash folder, existing LoRAs are never overwritten.
+- **Image server on your network (like Ollama, but for images):** section 4 → **🌐 Network server…** lets other
+  devices use this PC's image models and LoRAs. Off by default.
+  - *This computer only* (127.0.0.1, no key; requests from web pages in a browser are refused) or *home / office
+    network* (LAN addresses only, access key required — also use this for apps running in Docker).
+  - Another copy of AI Local Image Studio uses it via **Image engine → ➕ Add a server on the network…**
+    (address `192.168.x.x:7860` + key). Nothing is downloaded or loaded on that PC; the prompt is still prepared
+    by its own LLM. Its own LoRAs are sent to the server **once**, checked, and stored in `addons\network\`
+    (only `.safetensors` LoRAs, never full models; can be switched off).
+  - **Compatible APIs:** Automatic1111 (`/sdapi/v1/txt2img`, LoRAs as `<lora:name:0.8>`) for Open WebUI,
+    SillyTavern, Krita plug-ins…, and OpenAI images (`/v1/images/generations`). The key works as a Bearer token or
+    as the password (any user name).
+  - Requests run one at a time with this PC's memory guard; while it is busy (e.g. training) they wait in line.
+    Images are also saved on the server in `outputs\network\`.
+  - Windows asks once for firewall permission: allow **private networks** only. Never forward the port to the
+    internet.
 
 ## 📦 Requirements
 

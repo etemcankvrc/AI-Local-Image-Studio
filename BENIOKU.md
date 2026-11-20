@@ -1,10 +1,34 @@
-# 🎨 AI Local Image Studio v1.3.1
+# 🎨 AI Local Image Studio v1.4.0
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
 
-## v1.3.1'de yeni — kolaj / bölünmüş ekran kontrolü
+## v1.4.0'da yeni — görsel modelleri ve LoRA'lar ağda
+
+LLM gibi görsel modelleri ve LoRA'lar da artık ağda paylaşılabilir. İki yön de var:
+
+**1) Bu bilgisayar sunucu olsun** (4. bölüm → **🌐 Ağ sunucusu…**, varsayılan kapalı)
+- **Yalnızca bu bilgisayar** (127.0.0.1, anahtarsız: bu PC'deki uygulamalar için; tarayıcıdaki web sayfalarından gelen istekler reddedilir) ya da **Ev / ofis ağım** (yalnızca 192.168.x / 10.x / 172.16–31.x adresleri, erişim anahtarı gerekir; Docker'da çalışan uygulamalar, ör. Open WebUI, için de bunu seçin).
+- Port varsayılan **7860**. Anahtar "Yeni anahtar" ile değiştirilir, "Kopyala" ile alınır. Pencerede bağlanılacak adres yazar (ör. `http://192.168.1.20:7860`).
+- Üretim bu bilgisayarın modelleri, ayarları, Bellek Koruyucusu ve LoRA'larıyla yapılır. İstekler sırayla işlenir; bilgisayar meşgulse (ör. eğitim) sırada bekler, iş yarıda kesilmez.
+- Görseller sunucuda da `outputs\network\` klasörüne kaydedilir.
+- **Diğer cihazlardan gönderilen LoRA'lar** (kapatılabilir): yalnızca geçerli `.safetensors` LoRA'lar kabul edilir, tam modeller reddedilir, sağlama toplamı kontrol edilir, en fazla 2 GB. `addons\network\` klasörüne kaydedilir; aynı LoRA ikinci kez gönderilmez.
+- Windows ilk açılışta güvenlik duvarı izni sorar: yalnızca **Özel ağlar** işaretli olsun. Portu internete (modem port yönlendirme) asla açmayın.
+
+**2) Bu program başka bilgisayarın sunucusunu kullansın** (4. bölüm → **Görsel motoru → ➕ Ağdaki bir sunucuyu ekle…**)
+- Adres (`192.168.1.20:7860`) ve anahtar yazılır; seçim hatırlanır ve açılışta yeniden bağlanılır.
+- Görsel modeli listesinde sunucunun kurulu modelleri **🌐** ile görünür. Bu bilgisayara model ya da motor indirilmez, hiçbir şey yüklenmez; zayıf bir dizüstü bile kullanabilir.
+- Prompt yine bu bilgisayarın LLM'iyle hazırlanır (ya da ağdaki Ollama ile). LoRA / Kart seçiminde hem bu bilgisayarın hem sunucunun LoRA'ları görünür (sunucudakiler **🌐 ağdaki**). Buradaki bir LoRA seçilirse sunucuya **bir kez** gönderilir.
+- Üretilen görseller bu bilgisayarın çıktı klasörüne kaydedilir (bilgilerinde hangi sunucuda üretildiği yazar). **Durdur** sunucudaki işi de durdurur.
+- "Bu bilgisayar"a geri dönülünce her şey eskisi gibi yerelde çalışır.
+
+**Diğer uygulamalar** (Open WebUI, SillyTavern, Krita eklentileri…) da bağlanabilir:
+- **Automatic1111 uyumlu API:** `/sdapi/v1/txt2img`, `/sdapi/v1/sd-models`, `/sdapi/v1/loras`, `/sdapi/v1/progress`, `/sdapi/v1/interrupt`. LoRA prompt içinde `<lora:ad:0.8>` yazımıyla seçilir.
+- **OpenAI görsel API'si:** `/v1/images/generations` ve `/v1/models`.
+- Anahtar `Authorization: Bearer <anahtar>` olarak ya da parola olarak (kullanıcı adı fark etmez) verilir.
+
+## v1.3.5'te yeni — kolaj / bölünmüş ekran kontrolü
 
 - Tek görselde birden fazla kare olan görseller (kolajlar, yan yana ya da üst üste bölünmüş ekranlar, bölünmüş ekranlı videolardan çıkan kareler) eğitimi bozar: model bu düzeni de öğrenir ve görselleri bölmeli çizer.
 - Program artık bu görselleri bulur ve küçük önizlemeleriyle gösterir (kırmızı çerçeveler = kesilecek kareler). Seçenekler:
@@ -14,7 +38,7 @@
   - Çıkarılan dosyalar silinmez, veri setinin `excluded` klasörüne taşınır. Kendi klasörünüzden bağlantı olarak eklenen dosyalara hiç dokunulmaz, yalnızca veri setinden çıkarılır.
   - Algılama ek model indirmez; görüntünün ortasındaki düz, tam boy sınırlara ve tek renkli ayırıcı şeritlere bakar. Tuğla, fayans gibi desenler kolaj sayılmaz. Nadiren yanılabilir; bu yüzden dosya adları gösterilir ve karar size bırakılır.
 
-## v1.3.1'de yeni — eğitim modelini sen seçersin
+## v1.3.5'te yeni — eğitim modelini sen seçersin
 
 - Derin modda **Model** seçimi eklendi. LoRA bir modelin iç yapısına göre öğrenildiği için yalnızca o model ailesinde çalışır; artık hangisi için eğitileceğini sen seçiyorsun:
 
@@ -33,7 +57,7 @@
 - **LoRA çökmesi düzeltildi:** modelde karşılığı olmayan bir LoRA artık işi durdurmuyor; atlanıp log'a yazılıyor.
 - **RAM:** Windows için ayrılan %20 sabit pay kaldırıldı (bkz. üstte).
 
-## v1.3.1'de yeni — kendi modelin
+## v1.3.5'te yeni — kendi modelin
 
 - Civitai, Hugging Face ya da başka bir yerden indirdiğin **tek dosyalık SD 1.5 / SDXL modellerini** (`.safetensors`) `addons\models\` klasörüne koy. Model listesinde **📦 ad [SD 1.5]** gibi görünür.
   - Kalite ayarları, örnekleyiciler, LoRA'lar, yüz ve el düzeltici, ikinci geçiş ve büyütme bu modellerle de çalışır.
@@ -214,6 +238,8 @@ D:\AI Local Image Studio\
 
 ## Ağdaki Ollama (4. bölüm → LLM sunucusu)
 
+> Görsel modelleri ve LoRA'ları ağda paylaşmak için yukarıdaki **"görsel modelleri ve LoRA'lar ağda"** bölümüne bakın.
+
 - Seçenekler: **Bu bilgisayar**, **ağda bulunan bilgisayarlar** veya **elle IP**. Seçim hatırlanır.
 - LLM başka bilgisayarda çalışınca bu PC'nin VRAM'inin tamamı görsel modeline kalır.
 - Ağdaki bilgisayardaki modeller boşaltılmaz. Orada eksik olan bir model indirilecekse önce sorulur.
@@ -298,12 +324,18 @@ D:\AI Local Image Studio\
 19. **v1.3.0 — yüz modu:** Kendi yüzünüzün 15–30 fotoğrafı → tür "👤 Yüz", mod "Derin" → BAŞLAT.
     - İzin sorusu bir kez çıkmalı.
     - Log'da "👤 N görselde yüz bulunup kesildi" yazmalı. LoRA penceresinde "👤 Program · Yüz" görünmeli.
-20. **v1.3.1 — kolaj:** İki-üç kolaj ya da bölünmüş ekran görüntüsünü normal fotoğraflarla birlikte içe aktarın.
-    - İçe aktarma bitince kolajlar için soru çıkmalı. Evet → dosyalar `excluded` klasörüne taşınmalı.
-    - Eğitimi başlatırken yeni kolaj varsa Evet/Hayır/İptal sorusu çıkmalı. Hayır dediklerinizi bir daha sormamalı.
-21. **v1.3.1 — kendi modelin:** Bir SD 1.5 modelini (`.safetensors`) `addons\models\` içine koyup programı açın.
+20. **v1.3.5 — kolaj:** İki-üç kolaj ya da bölünmüş ekran görüntüsünü normal fotoğraflarla birlikte içe aktarın.
+    - İçe aktarma bitince önizlemeli soru çıkmalı (kırmızı çerçeveler = kesilecek kareler).
+    - "✂ Kes, ayrı görseller yap" → kareler veri setine ayrı görseller olarak eklenmeli ve açıklanmalı, asılları `excluded` klasörüne taşınmalı. "Çıkar" → yalnızca `excluded`'a taşınmalı.
+    - Eğitimi başlatırken yeni kolaj varsa aynı soru "Eğitimi başlatma" seçeneğiyle çıkmalı. "Kalsın" dediklerinizi bir daha sormamalı.
+21. **v1.3.5 — kendi modelin:** Bir SD 1.5 modelini (`.safetensors`) `addons\models\` içine koyup programı açın.
     - 4. bölümdeki model listesinde "📦 ad [SD 1.5]" görünmeli. LoRA penceresinde görünmemeli.
     - İlk üretimde lisans uyarısı bir kez çıkmalı; görsel üretilmeli ve dosya adında modelin adı olmalı.
+22. **v1.4.0 — ağ (iki bilgisayar):** Güçlü PC'de 4. bölüm → "🌐 Ağ sunucusu…" → "Ağ sunucusunu aç" + "Ev / ofis ağım" → Uygula. Güvenlik duvarında yalnızca "Özel ağlar"a izin verin.
+    - Log'da adres (ör. `http://192.168.1.20:7860`) yazmalı; 4. bölümde "🌐 sunuluyor: …" görünmeli.
+    - Diğer PC'de "Görsel motoru → ➕ Ağdaki bir sunucuyu ekle…" → adres + anahtar. Model listesinde 🌐 modeller görünmeli; o PC'ye hiçbir şey indirilmemeli.
+    - O PC'deki bir LoRA'yı seçip üretin: log'da "📤 … gönderiliyor (yalnızca bir kez)" bir kez yazmalı, görseller o PC'nin çıktı klasörüne kaydedilmeli. Sunucuda LoRA `addons\network\` içinde olmalı.
+    - Üretim sırasında Durdur → sunucudaki iş de durmalı. Yanlış anahtarla bağlanma reddedilmeli.
 
 Sorun çıkarsa veri klasöründeki `logs\ails.log` (ilk kurulumda `logs\setup.log`) dosyasını gönderin.
 
@@ -314,7 +346,7 @@ Sorun çıkarsa veri klasöründeki `logs\ails.log` (ilk kurulumda `logs\setup.l
 - AMD/Intel ekran kartları v1'de CPU modunda çalışır.
 - Programa özel Python, `uv` aracıyla GitHub'daki python-build-standalone sürümlerinden iner. İnternet ya da GitHub'a erişim yoksa program bilgisayardaki Python'la devam eder.
 - Videodan kare çıkarma OpenCV'nin içindeki FFmpeg'i kullanır. Çok yeni ya da nadir codec'lerle kaydedilmiş bir video okunamazsa log'da "video okunamadı" yazar.
-- Eğitim (derin mod ve ödül/ceza) bu sürümde yalnızca **SD 1.5** için. SDXL, Z-Image ve FLUX.2 eğitimi 4 GB'a sığmıyor. Bu modeller için dışarıdan eklenen LoRA'lar kullanılabilir.
+- Ödül/ceza ile kendi kendine öğrenme yalnızca **SD 1.5** için. Derin modda SDXL / FLUX.2 / Z-Image eğitimi büyük kartlarda tam hızda, küçük kartlarda RAM destekli ve birkaç kat yavaş çalışır.
 - Otomatik hakem basit bir ölçüdür: bozuk yüz, bulanıklık, kapkara/bembeyaz gibi bariz hataları cezalandırır, "güzellik" ölçmez. En güçlü sinyal sizin 👍 / 👎 puanlarınızdır.
 - Florence-2 için motorun güncel olması gerekir. Eski motorda program uyarır; 6. bölümden motor yeniden kurulabilir.
 - Yüz/el düzeltici, algılayıcının yüz ya da el olarak görebildiği bölgeleri düzeltir. Çok bozuk bir el bazen hiç algılanmaz. El algılayıcı yanlışlıkla bir eşyayı el sanarsa oraya el çizmemesi için el bölgelerinde prompt'a "el" kelimesi eklenmez.
