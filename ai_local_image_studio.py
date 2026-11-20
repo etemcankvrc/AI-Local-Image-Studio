@@ -622,8 +622,6 @@ EN = {
     "tr_log_face_mode": "👤 Face found and cut out in {n} image(s); {skipped} image(s) without a face were skipped.",
     "v2_status_collage": "Checking images for collages…",
     "v2_prog_collage": "Checking layout {a}/{b}",
-    "v2_collage_q": "{n} image(s) look like a collage or split screen (several pictures in one image):\n{names}\n\nThe model would learn this layout too and start drawing split images.\n\nRemove them from training?\nYes: remove (the files are moved to the dataset's 'excluded' folder, not deleted)\nNo: keep them (you won't be asked about these again)",
-    "v2_collage_cancel": "Cancel: don't start training now",
     "v2_log_collage_out": "{n} collage-like image(s) removed from the dataset (moved to: {folder})",
     "v2_log_collage_kept": "{n} collage-like image(s) kept, as you chose.",
     "v2_log_collage_cancel": "Training was not started.",
@@ -664,6 +662,18 @@ EN = {
     "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
     "v2_status_stopping": "Stopping — saving the latest state…",
     "tr_log_stopping": "⏹ Stopping: the current step is cancelled, the LoRA is saved as it is (no sample image)…",
+    "v2_collage_q2": "{n} image(s) look like a collage or split screen (several pictures in one image). The model would learn this layout too and start drawing split images.\n\nThe red frames show where the program would cut. ✂ Cut turns every frame into a separate image ({new} new images in total) — one picture becomes several training images.",
+    "v2_collage_panels": "✂ {n} frames",
+    "v2_collage_nosplit": "can't be cut",
+    "v2_collage_more": "…and {n} more",
+    "v2_collage_btn_split": "✂ Cut into separate images ({new})",
+    "v2_collage_btn_out": "Remove",
+    "v2_collage_btn_keep": "Keep",
+    "v2_collage_btn_cancel": "Don't start training",
+    "v2_collage_note": "Originals are never deleted: cut and removed images are moved to the dataset's 'excluded' folder. Images that can't be cut are removed. Frames smaller than the 'skip smaller images' size are dropped. 'Keep': you won't be asked about these again.",
+    "v2_status_collage_split": "Cutting collages into frames…",
+    "v2_log_collage_split": "✂ {n} collage(s) cut into {new} separate images (originals moved to: {folder})",
+    "v2_log_collage_split_failed": "{n} collage(s) could not be cut and were removed from the dataset.",
     "log_custom_missing": "The model file is no longer there: {path}",
 }
 
@@ -2243,7 +2253,8 @@ class StyleStudioWindow:
                 "checkpoint": self.v2["checkpoint"], "sample": self.v2["sample_each"], "judge": self.v2["auto_judge"],
                 "caption": need_cap, "tag": (data or {}).get("tag") or (data or {}).get("name") or slug,
                 "llm": (self.app.v_llm_host.get(), self.app.v_llm.get()), "outdir": self.app.v_outdir.get(),
-                "hide_faces": hide, "need_detector": need_det, "base": base}
+                "hide_faces": hide, "need_detector": need_det, "base": base, "autocap": bool(self.v_autocap.get()),
+                "learn": learn}
         self.app.start_job("analysis", self.job_analysis, mode, slug, plan, opts)
         self.update_state()
 
@@ -2252,9 +2263,14 @@ class StyleStudioWindow:
         app = self.app
         m15 = core.IMAGE_MODEL_BY_KEY["sd15"]
         if mode in ("light", "deep"):
-            if not self._collage_check(slug, can_cancel=True):
+            cc = self._collage_check(slug, can_cancel=True)
+            if cc == "cancel":
                 app.status("status_done")
                 return
+            # kolajdan kesilen yeni karelerin açıklaması yok: otomatik okuma açıksa ve okuyucu kuruluysa okunur
+            if cc == "split" and opts.get("autocap") and not (mode == "deep" and opts.get("learn") == "face") \
+                    and core.is_captioner_installed(app.paths.models):
+                opts["caption"] = True
             if not (core.load_dataset(self.paths, slug) or {}).get("items"):
                 app.log(t("v2_start_empty"))
                 app.status("status_done")
@@ -2543,18 +2559,77 @@ class StyleStudioWindow:
         parent = self.w if self.alive() else self.app.r
         return messagebox.askyesno(APP_NAME, t("v2_videos_q", n=n, gb=size_gb, k=k), parent=parent)
 
-    def _ask_collage(self, names, can_cancel):
+    def _ask_collage(self, previews, n_total, n_new, can_cancel):
+        """
+        Kolaj penceresi: küçük önizlemeler (kırmızı çerçeveler = kesilecek kareler) ve dört seçenek.
+        Dönüş: 'split' | 'exclude' | 'keep' | None (eğitimi başlatma).
+        """
         parent = self.w if self.alive() else self.app.r
-        shown = "\n".join("• " + x for x in names[:8]) + ("\n• …" if len(names) > 8 else "")
-        text = t("v2_collage_q", n=len(names), names=shown)
+        from PIL import ImageTk
+        f = self.f
+        dlg = tk.Toplevel(parent)
+        dlg.title(APP_NAME)
+        dlg.configure(bg=CARD_BG)
+        dlg.transient(parent)
+        result = {"v": None if can_cancel else "keep"}
+        tk.Label(dlg, text=t("v2_collage_q2", n=n_total, new=n_new), bg=CARD_BG, fg=TXT, font=f.n10, justify="left",
+                 wraplength=760, anchor="w").pack(fill="x", padx=14, pady=(12, 8))
+        grid = tk.Frame(dlg, bg=CARD_BG)
+        grid.pack(padx=14, pady=4)
+        dlg._imgs = []
+        for i, (name, th, k) in enumerate(previews):
+            cell = tk.Frame(grid, bg=CARD_BG)
+            cell.grid(row=i // 4, column=i % 4, padx=4, pady=4, sticky="n")
+            ph = ImageTk.PhotoImage(th)
+            dlg._imgs.append(ph)
+            tk.Label(cell, image=ph, bg=CANVAS_BG).pack()
+            tk.Label(cell, text=(name if len(name) <= 26 else name[:24] + "…"), bg=CARD_BG, fg=LBL,
+                     font=f.n9).pack()
+            tk.Label(cell, text=t("v2_collage_panels", n=k) if k >= 1 else t("v2_collage_nosplit"), bg=CARD_BG,
+                     fg=GREEN if k >= 1 else WARN, font=f.b9).pack()
+        if n_total > len(previews):
+            tk.Label(dlg, text=t("v2_collage_more", n=n_total - len(previews)), bg=CARD_BG, fg=LBL,
+                     font=f.n9).pack(anchor="w", padx=14)
+        btns = tk.Frame(dlg, bg=CARD_BG)
+        btns.pack(fill="x", padx=14, pady=12)
+
+        def choose(v):
+            result["v"] = v
+            dlg.destroy()
+
+        b_split = tk.Button(btns, text=t("v2_collage_btn_split", new=n_new), bg=GREEN, fg="#000000", font=f.b11,
+                            activebackground="#33ff99", activeforeground="#000000", relief="flat", cursor="hand2",
+                            command=lambda: choose("split"))
+        b_split.pack(side="left", fill="x", expand=True, ipady=5)
+        if n_new < 1:
+            b_split.config(state="disabled", bg=BTN)
+        tk.Button(btns, text=t("v2_collage_btn_out"), bg=ORANGE, fg="white", font=f.b10, relief="flat", cursor="hand2",
+                  command=lambda: choose("exclude")).pack(side="left", padx=(8, 0), ipady=5, ipadx=10)
+        tk.Button(btns, text=t("v2_collage_btn_keep"), bg=BTN, fg=TXT, font=f.b10, relief="flat", cursor="hand2",
+                  command=lambda: choose("keep")).pack(side="left", padx=(8, 0), ipady=5, ipadx=10)
         if can_cancel:
-            return messagebox.askyesnocancel(APP_NAME, text + "\n" + t("v2_collage_cancel"), parent=parent)
-        return messagebox.askyesno(APP_NAME, text, parent=parent)
+            tk.Button(btns, text=t("v2_collage_btn_cancel"), bg=RED, fg="white", font=f.b10, relief="flat",
+                      cursor="hand2", command=lambda: choose(None)).pack(side="left", padx=(8, 0), ipady=5, ipadx=10)
+        tk.Label(dlg, text=t("v2_collage_note"), bg=CARD_BG, fg="#888888", font=f.n9, justify="left", wraplength=760,
+                 anchor="w").pack(fill="x", padx=14, pady=(0, 12))
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.update_idletasks()
+        try:
+            x = parent.winfo_rootx() + max(0, (parent.winfo_width() - dlg.winfo_width()) // 2)
+            y = parent.winfo_rooty() + max(0, (parent.winfo_height() - dlg.winfo_height()) // 3)
+            dlg.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+        dlg.grab_set()
+        dlg.focus_set()
+        b_split.focus_set()
+        parent.wait_window(dlg)
+        return result["v"]
 
     def _collage_check(self, slug, can_cancel):
         """
         Kolaj / bölünmüş ekran gibi görünen görselleri bulur ve kullanıcıya sorar (iş thread'inde çalışır).
-        False: kullanıcı eğitimi iptal etti.
+        Dönüş: 'cancel' (eğitim başlatılmasın) | 'split' (kareler eklendi, açıklanmaları gerekir) | 'ok'.
         """
         app = self.app
         app.status("v2_status_collage")
@@ -2564,22 +2639,49 @@ class StyleStudioWindow:
         finally:
             self._finish(None)
         if not found:
-            return True
+            return "ok"
         files = [it.get("file") for it in found]
-        ans = app.call_ui(self._ask_collage, [os.path.basename(f or "") for f in files], can_cancel)
+        previews, n_new = [], 0
+        min_side = max(64, int(self.v2.get("min_side", 256) or 0))
+        for k, it in enumerate(found[:200]):
+            p = core.dataset_item_path(self.paths, slug, it)
+            try:
+                if k < 8:
+                    th, n = core.collage_preview(p, min_side=min_side)
+                    previews.append((os.path.basename(it.get("file") or ""), th, n))
+                else:
+                    from PIL import Image
+                    with Image.open(p) as im:
+                        n = len(core.collage_panels(im.convert("RGB"), min_px=min_side))
+            except Exception:
+                n = 0
+            n_new += n
+        ans = app.call_ui(self._ask_collage, previews, len(files), n_new, can_cancel)
         if ans is None:
             if can_cancel:
                 app.log(t("v2_log_collage_cancel"))
-                return False
-            ans = False
-        if ans:
+                return "cancel"
+            ans = "keep"
+        result = "ok"
+        if ans == "split":
+            app.status("v2_status_collage_split")
+            st = core.split_collage_items(self.paths, slug, files, min_side=self.v2.get("min_side", 256),
+                                          abort_event=app.abort,
+                                          progress_cb=lambda a, b: self._prog(a, b, t("v2_prog_collage", a=a, b=b)))
+            app.log(t("v2_log_collage_split", n=st["split"], new=st["new"],
+                      folder=os.path.join(core._ds_dir(self.paths, slug), core.EXCLUDED_DIR)))
+            if st["failed"]:
+                core.exclude_dataset_items(self.paths, slug, st["failed"])
+                app.log(t("v2_log_collage_split_failed", n=len(st["failed"])))
+            result = "split" if st["new"] else "ok"
+        elif ans == "exclude":
             n = core.exclude_dataset_items(self.paths, slug, files)
             app.log(t("v2_log_collage_out", n=n, folder=os.path.join(core._ds_dir(self.paths, slug), core.EXCLUDED_DIR)))
         else:
             core.keep_dataset_items(self.paths, slug, files)
             app.log(t("v2_log_collage_kept", n=len(files)))
         self._finish(None)
-        return True
+        return result
 
     def _ensure_cv2(self):
         """Videodan kare çıkarmak için OpenCV (programın ortamında). Yoksa onayla kurulur. (İş thread'inde çalışır.)"""

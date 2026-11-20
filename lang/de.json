@@ -553,8 +553,6 @@
   "tr_log_face_mode": "👤 In {n} Bild(ern) wurde das Gesicht gefunden und ausgeschnitten; {skipped} Bild(er) ohne Gesicht übersprungen.",
   "v2_status_collage": "Bilder werden auf Collagen geprüft…",
   "v2_prog_collage": "Layout-Prüfung {a}/{b}",
-  "v2_collage_q": "{n} Bild(er) sehen aus wie eine Collage oder ein geteilter Bildschirm (mehrere Bilder in einem):\n{names}\n\nDas Modell würde dieses Layout mitlernen und geteilte Bilder zeichnen.\n\nAus dem Training entfernen?\nJa: entfernen (die Dateien werden nicht gelöscht, sondern in den Ordner 'excluded' des Datensatzes verschoben)\nNein: behalten (für diese Bilder wird nicht erneut gefragt)",
-  "v2_collage_cancel": "Abbrechen: Training jetzt nicht starten",
   "v2_log_collage_out": "{n} collageartige(s) Bild(er) aus dem Datensatz entfernt (verschoben nach: {folder})",
   "v2_log_collage_kept": "{n} collageartige(s) Bild(er) auf Wunsch behalten.",
   "v2_log_collage_cancel": "Das Training wurde nicht gestartet.",
@@ -595,5 +593,17 @@
   "tr_log_swap": "🐢 Training mit RAM-Unterstützung: {gpu:.1f} GB des Modells bleiben auf der Grafikkarte, {ram:.1f} GB werden bei jedem Schritt aus dem RAM geladen (langsamer, passt aber).",
   "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
   "v2_status_stopping": "Wird gestoppt — letzter Stand wird gespeichert…",
-  "tr_log_stopping": "⏹ Wird gestoppt: Der laufende Schritt wird abgebrochen, die LoRA wird im aktuellen Stand gespeichert (ohne Beispielbild)…"
+  "tr_log_stopping": "⏹ Wird gestoppt: Der laufende Schritt wird abgebrochen, die LoRA wird im aktuellen Stand gespeichert (ohne Beispielbild)…",
+  "v2_collage_q2": "{n} Bild(er) sehen aus wie eine Collage oder ein geteilter Bildschirm (mehrere Bilder in einem). Das Modell würde dieses Layout mitlernen und geteilte Bilder zeichnen.\n\nDie roten Rahmen zeigen, wo das Programm schneiden würde. ✂ Schneiden macht aus jedem Rahmen ein eigenes Bild (insgesamt {new} neue Bilder) — aus einem Bild werden mehrere Trainingsbilder.",
+  "v2_collage_panels": "✂ {n} Rahmen",
+  "v2_collage_nosplit": "nicht teilbar",
+  "v2_collage_more": "…und {n} weitere",
+  "v2_collage_btn_split": "✂ In Einzelbilder schneiden ({new})",
+  "v2_collage_btn_out": "Entfernen",
+  "v2_collage_btn_keep": "Behalten",
+  "v2_collage_btn_cancel": "Training nicht starten",
+  "v2_collage_note": "Originale werden nie gelöscht: Geschnittene und entfernte Bilder kommen in den Ordner 'excluded' des Datensatzes. Nicht teilbare Bilder werden entfernt. Rahmen kleiner als die Mindestgröße werden verworfen. 'Behalten': Für diese Bilder wird nicht erneut gefragt.",
+  "v2_status_collage_split": "Collagen werden in Einzelbilder geschnitten…",
+  "v2_log_collage_split": "✂ {n} Collage(n) in {new} Einzelbilder geschnitten (Originale verschoben nach: {folder})",
+  "v2_log_collage_split_failed": "{n} Collage(n) konnten nicht geschnitten werden und wurden entfernt."
 }

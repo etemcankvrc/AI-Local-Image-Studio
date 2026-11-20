@@ -20,8 +20,9 @@ your own language into English prompts. The interface is available in **English,
     it, from openly licensed images (Openverse). Files are named after the dataset (`istanbul_street_0001.jpg`).
   - Images without a description are **captioned automatically** (Florence-2).
   - **Collage / split-screen check:** images that contain several pictures (collages, split-screen video frames)
-    are detected and you are asked whether to leave them out — otherwise the model learns to draw split images.
-    Removed files are moved to the dataset's `excluded` folder, never deleted.
+    are detected and shown with the planned cuts. One click **cuts them into separate images** (one picture → several
+    training images; separator bands are trimmed, nested layouts are handled), or leave them out / keep them.
+    Originals are moved to the dataset's `excluded` folder, never deleted.
   - Choose **what to teach**: 🎨 style, 🏙️ place / city, 🧸 subject / object / character, 🧍 human anatomy / pose,
     👤 face. Each type trains differently. In *place* mode faces are blurred and not learned, so the surroundings
     come first; in *face* mode only the face is learned.
