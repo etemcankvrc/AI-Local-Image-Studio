@@ -23,7 +23,8 @@
 | FLUX.2 [klein] 4B | ≥ 12 GB VRAM | *klein base 4B* üzerinde eğitilir (bir kez ~7.8 GB, Apache-2.0), hızlı FLUX.2 ile kullanılır |
 | Z-Image | ≥ 16 GB VRAM | *Z-Image base* üzerinde eğitilir (bir kez ~12.3 GB, Apache-2.0), Z-Image-Turbo ile kullanılır |
 
-  - Ekran kartına sığmayan seçenek ⛔ ile gösterilir ve başlatılmaz (çökme yok). Eğitim sırasında bellek yetmezse daha düşük çözünürlükle yeniden denenir.
+  - **RAM destekli eğitim (🐢):** ekran kartı tam hız için yetmiyorsa (ör. 4 GB kartta FLUX.2) model RAM'de tutulur ve ekran kartına parça parça taşınır (blok takası). Metin modeli de aynı yöntemle okunur. Çalışır ama birkaç kat yavaştır. En az 3.5 GB VRAM'li NVIDIA kart ve yeterli RAM gerekir: SDXL 16 GB, FLUX.2 24 GB, Z-Image 28 GB.
+  - Bunları da karşılamayan seçenek ⛔ ile gösterilir ve başlatılmaz (çökme yok). Eğitim sırasında bellek yetmezse daha düşük çözünürlükle yeniden denenir.
   - Base modelden yalnızca dönüştürücü indirilir; VAE ve metin kodlayıcı kurulu modelden alınır. Metin kodlayıcı metinler okunduktan sonra bellekten silinir, böylece FLUX.2 eğitimi 12 GB'a sığar.
   - Her modelin LoRA'sı ayrı dosyaya kaydedilir (`ad_sdxl`, `ad_flux2`, `ad_zimage`); aynı veri setiyle farklı modellerde eğitim birbirini ezmez.
 - **LoRA uyumluluğu artık ağırlıklara bakılarak belirleniyor.** Önceden FLUX.1, Wan (video), Qwen-Image gibi başka modellerin LoRA'ları FLUX.2 / Z-Image için "uygun" görünebiliyordu. Şimdi FLUX.2 4B, FLUX.2 9B/dev, FLUX.1, Z-Image, Wan ve Qwen-Image LoRA'ları ayrılıyor; uymayanlar "Bu modele uyanlar" filtresinde gizleniyor.

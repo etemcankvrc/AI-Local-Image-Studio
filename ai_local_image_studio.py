@@ -651,12 +651,17 @@ EN = {
     "v2_base_note_sdxl": "Trains at 1024 px. The LoRA works with SDXL and your own SDXL models.",
     "v2_base_note_flux2_klein_4b": "Trains on FLUX.2 [klein] base 4B (downloaded once, ~7.8 GB, Apache-2.0); the LoRA is used with the fast FLUX.2 [klein] 4B.",
     "v2_base_note_zimage_turbo": "Trains on Z-Image base (downloaded once, ~12.3 GB, Apache-2.0); the LoRA is used with Z-Image-Turbo (raise its weight to 1.2–1.5 if the effect is weak).",
-    "v2_base_vram": "⛔ {name} training needs at least {need:.0f} GB of VRAM on an NVIDIA card (this PC: {have:.1f} GB).",
-    "v2_base_vram_q": "{name} training needs at least {need:.0f} GB of graphics memory on an NVIDIA card; this PC has {have:.1f} GB.\n\nIt would not finish here, so it is not started. Choose SD 1.5 (works with 4 GB) — or train on a PC with a bigger card and copy the LoRA file into the loras folder.",
+    "v2_base_vram": "⛔ {name} training needs an NVIDIA card with at least {need:.1f} GB of VRAM (this PC: {have:.1f} GB).",
+    "v2_base_vram_q": "{name} training needs an NVIDIA card with at least {need:.1f} GB of graphics memory; this PC has {have:.1f} GB.\n\nIt would not run here, so it is not started. Choose SD 1.5 (also works on the CPU) — or train on a PC with an NVIDIA card and copy the LoRA file into the loras folder.",
     "train_base_item": "{name} — for training only (transformer), {lic}",
     "tr_log_base": "Training model: {base}",
     "tr_log_oom_res": "⚠️ Not enough graphics memory — trying again at {res} px…",
     "tr_log_oom_final": "❌ Not enough graphics memory even at the lowest resolution. Close other programs that use the GPU (games, video in the browser) or choose a smaller training model.",
+    "v2_base_swap": "RAM-assisted, slow",
+    "v2_base_swap_note": "🐢 Your card has {have:.1f} GB (full speed needs {need:.0f} GB): the model stays in RAM and is moved to the card piece by piece — it works, but training is several times slower.",
+    "v2_base_ram": "⛔ {name} training needs at least {need:.0f} GB of RAM (this PC: {have:.0f} GB).",
+    "tr_log_swap": "🐢 RAM-assisted training: {gpu:.1f} GB of the model stays on the graphics card, {ram:.1f} GB is moved from RAM at every step (slower, but it fits).",
+    "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
     "log_custom_missing": "The model file is no longer there: {path}",
 }
 
@@ -1808,9 +1813,17 @@ class StyleStudioWindow:
         for k in core.TRAIN_BASES:
             m = core.IMAGE_MODEL_BY_KEY[k]
             sp = core.TRAIN_SPECS[k]
-            ok, _ = core.train_ready(self.app.hw, k)
-            need = t("v2_base_any") if sp["cpu_ok"] else t("v2_base_need", gb=sp["vram"])
-            out.append((k, f"{'✔' if ok else '⛔'} {m['name']}  ({need})"))
+            ok, why = core.train_ready(self.app.hw, k)
+            if sp["cpu_ok"]:
+                need = t("v2_base_any")
+            elif why == "swap":
+                need = t("v2_base_swap")
+            elif why == "ram":
+                need = t("v2_base_need_ram", gb=sp["ram"])
+            else:
+                need = t("v2_base_need", gb=sp["vram"])
+            icon = "🐢" if why == "swap" else ("✔" if ok else "⛔")
+            out.append((k, f"{icon} {m['name']}  ({need})"))
         return out
 
     def update_state(self):
@@ -1840,18 +1853,24 @@ class StyleStudioWindow:
         what = t("learn_what_" + learn)
         gpu = core.train_device(hw) != "cpu"
         base = self.v_base.get() if self.v_base.get() in core.TRAIN_BASES else "sd15"
-        base_ok, _ = core.train_ready(hw, base)
+        base_ok, base_why = core.train_ready(hw, base)
         if mode == "deep":
             if base != "sd15":
                 gpu = base_ok
             note = t("v2_base_note_" + base)
-            if not base_ok:
+            if base_why == "swap":
+                note += "  " + t("v2_base_swap_note", need=core.TRAIN_SPECS[base]["vram"], have=hw.vram_gb)
+            elif base_why == "ram":
+                note += "  " + t("v2_base_ram", name=core.IMAGE_MODEL_BY_KEY[base]["name"],
+                                 need=core.TRAIN_SPECS[base]["ram"], have=hw.ram_total_gb)
+            elif not base_ok:
                 note += "  " + t("v2_base_vram", name=core.IMAGE_MODEL_BY_KEY[base]["name"],
-                                 need=core.TRAIN_SPECS[base]["vram"], have=hw.vram_gb if hw.cuda_usable else 0.0)
+                                 need=core.SWAP_MIN_VRAM, have=hw.vram_gb if hw.cuda_usable else 0.0)
             self.lbl_mode.config(text=t("v2_mode_deep_info", what=what, extra=t("v2_deep_note_" + learn),
                                         base=core.IMAGE_MODEL_BY_KEY[base]["name"]) + "  " + note + "  " +
-                                 (t("fit_ok") if gpu else (t("fit_slow") if base == "sd15" else "")),
-                                 fg=GREEN if gpu else (WARN if base == "sd15" else RED))
+                                 ((t("fit_slow") if base_why == "swap" else t("fit_ok")) if gpu
+                                  else (t("fit_slow") if base == "sd15" else "")),
+                                 fg=(WARN if base_why == "swap" else GREEN) if gpu else (WARN if base == "sd15" else RED))
         elif mode == "self":
             self.lbl_mode.config(text=t("v2_mode_self_info") + "  " + (t("fit_ok") if gpu else t("fit_slow")),
                                  fg=GREEN if gpu else WARN)
@@ -2186,11 +2205,16 @@ class StyleStudioWindow:
             need_cap = False
         train = mode in ("deep", "self")
         base = self.v_base.get() if (mode == "deep" and self.v_base.get() in core.TRAIN_BASES) else "sd15"
-        if mode == "deep" and not core.train_ready(self.app.hw, base)[0]:
+        ready, why = core.train_ready(self.app.hw, base) if mode == "deep" else (True, "")
+        if not ready:
             hw = self.app.hw
-            messagebox.showinfo(APP_NAME, t("v2_base_vram_q", name=core.IMAGE_MODEL_BY_KEY[base]["name"],
-                                            need=core.TRAIN_SPECS[base]["vram"],
-                                            have=hw.vram_gb if hw.cuda_usable else 0.0), parent=self.w)
+            if why == "ram":
+                txt = t("v2_base_ram", name=core.IMAGE_MODEL_BY_KEY[base]["name"], need=core.TRAIN_SPECS[base]["ram"],
+                        have=hw.ram_total_gb)
+            else:
+                txt = t("v2_base_vram_q", name=core.IMAGE_MODEL_BY_KEY[base]["name"], need=core.SWAP_MIN_VRAM,
+                        have=hw.vram_gb if hw.cuda_usable else 0.0)
+            messagebox.showinfo(APP_NAME, txt, parent=self.w)
             return
         if mode == "deep" and learn == "face" and not data.get("face_ok"):
             # Yüz modu bir kişinin görünüşünü öğrenir: veri seti başına bir kez izin sorulur.
@@ -2373,8 +2397,8 @@ class StyleStudioWindow:
                 app.log(t("tr_log_nothing"))
                 raise JobFail()
             except core.TrainVramError as e:
-                key, need, have = e.args[0]
-                app.log(t("v2_base_vram", name=core.IMAGE_MODEL_BY_KEY[key]["name"], need=need, have=have))
+                key, _need, have = e.args[0]
+                app.log(t("v2_base_vram", name=core.IMAGE_MODEL_BY_KEY[key]["name"], need=core.SWAP_MIN_VRAM, have=have))
                 raise JobFail()
             except core.AbortedError:
                 if wd.triggered:

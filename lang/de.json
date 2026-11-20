@@ -583,10 +583,15 @@
   "v2_base_note_sdxl": "Trainiert mit 1024 px. Die LoRA funktioniert mit SDXL und eigenen SDXL-Modellen.",
   "v2_base_note_flux2_klein_4b": "Trainiert auf FLUX.2 [klein] base 4B (einmaliger Download, ~7,8 GB, Apache-2.0); die LoRA wird mit dem schnellen FLUX.2 [klein] 4B verwendet.",
   "v2_base_note_zimage_turbo": "Trainiert auf Z-Image base (einmaliger Download, ~12,3 GB, Apache-2.0); die LoRA wird mit Z-Image-Turbo verwendet (bei schwacher Wirkung Stärke 1,2–1,5).",
-  "v2_base_vram": "⛔ {name}-Training braucht mindestens {need:.0f} GB VRAM auf einer NVIDIA-Karte (dieser PC: {have:.1f} GB).",
-  "v2_base_vram_q": "{name}-Training braucht mindestens {need:.0f} GB Grafikspeicher auf einer NVIDIA-Karte; dieser PC hat {have:.1f} GB.\n\nEs würde hier nicht fertig, daher wird es nicht gestartet. Wähle SD 1.5 (läuft mit 4 GB) — oder trainiere auf einem PC mit größerer Karte und kopiere die LoRA-Datei in den Ordner loras.",
+  "v2_base_vram": "⛔ {name}-Training braucht eine NVIDIA-Karte mit mindestens {need:.1f} GB VRAM (dieser PC: {have:.1f} GB).",
+  "v2_base_vram_q": "{name}-Training braucht eine NVIDIA-Karte mit mindestens {need:.1f} GB Grafikspeicher; dieser PC hat {have:.1f} GB.\n\nEs würde hier nicht laufen, daher wird es nicht gestartet. Wähle SD 1.5 (läuft auch auf der CPU) — oder trainiere auf einem PC mit NVIDIA-Karte und kopiere die LoRA-Datei in den Ordner loras.",
   "train_base_item": "{name} — nur fürs Training (Transformer), {lic}",
   "tr_log_base": "Trainingsmodell: {base}",
   "tr_log_oom_res": "⚠️ Grafikspeicher reicht nicht — neuer Versuch mit {res} px…",
-  "tr_log_oom_final": "❌ Selbst bei der kleinsten Auflösung reicht der Grafikspeicher nicht. Schließe andere GPU-Programme (Spiele, Videos im Browser) oder wähle ein kleineres Trainingsmodell."
+  "tr_log_oom_final": "❌ Selbst bei der kleinsten Auflösung reicht der Grafikspeicher nicht. Schließe andere GPU-Programme (Spiele, Videos im Browser) oder wähle ein kleineres Trainingsmodell.",
+  "v2_base_swap": "mit RAM-Unterstützung, langsam",
+  "v2_base_swap_note": "🐢 Deine Karte hat {have:.1f} GB (volle Geschwindigkeit braucht {need:.0f} GB): Das Modell bleibt im RAM und wird stückweise auf die Karte geladen — es funktioniert, aber das Training ist mehrfach langsamer.",
+  "v2_base_ram": "⛔ {name}-Training braucht mindestens {need:.0f} GB RAM (dieser PC: {have:.0f} GB).",
+  "tr_log_swap": "🐢 Training mit RAM-Unterstützung: {gpu:.1f} GB des Modells bleiben auf der Grafikkarte, {ram:.1f} GB werden bei jedem Schritt aus dem RAM geladen (langsamer, passt aber).",
+  "v2_base_need_ram": "≥ {gb:.0f} GB RAM"
 }

@@ -5121,25 +5121,35 @@ TRAIN_BASES = ("sd15", "sdxl", "flux2_klein_4b", "zimage_turbo")
 # (hızlı) modelde değil, aynı ailenin damıtılmamış "base" modelinde eğitir; eğitilen LoRA hızlı modelde kullanılır.
 # Base modelden yalnızca dönüştürücü (transformer) indirilir; VAE, metin kodlayıcı ve sözlük kurulu modelden alınır.
 TRAIN_SPECS = {
-    "sd15": {"vram": 3.5, "res": 512, "fallback": (384,), "cpu_ok": True},
-    "sdxl": {"vram": 10.0, "res": 1024, "fallback": (768, 512), "cpu_ok": False},
-    "flux2_klein_4b": {"vram": 12.0, "res": 512, "fallback": (384,), "cpu_ok": False,
+    "sd15": {"vram": 3.5, "res": 512, "fallback": (384,), "cpu_ok": True, "ram": 8},
+    "sdxl": {"vram": 10.0, "res": 1024, "fallback": (768, 512), "cpu_ok": False, "ram": 16, "res_swap": 768},
+    "flux2_klein_4b": {"vram": 12.0, "res": 512, "fallback": (384,), "cpu_ok": False, "ram": 24,
                        "base_repo": "black-forest-labs/FLUX.2-klein-base-4B", "base_name": "FLUX.2 [klein] base 4B",
                        "base_gb": 7.8, "license": "Apache-2.0", "sample_steps": 24, "sample_cfg": 4.0},
-    "zimage_turbo": {"vram": 16.0, "res": 512, "fallback": (384,), "cpu_ok": False,
+    "zimage_turbo": {"vram": 16.0, "res": 512, "fallback": (384,), "cpu_ok": False, "ram": 28,
                      "base_repo": "Tongyi-MAI/Z-Image", "base_name": "Z-Image (base)", "base_gb": 12.3,
                      "license": "Apache-2.0", "sample_steps": 28, "sample_cfg": 4.0},
 }
 
 
+SWAP_MIN_VRAM = 3.5           # RAM destekli eğitim için en az VRAM (4 GB kartlar)
+
+
 def train_ready(hw, key):
-    """(uygun_mu, neden) — neden: '' | 'vram' (GPU yok ya da VRAM yetersiz)."""
+    """
+    (uygun_mu, durum) — durum: '' (tamamen ekran kartında) | 'swap' (RAM destekli, yavaş) |
+    'vram' (NVIDIA GPU yok ya da 3.5 GB'tan az) | 'ram' (RAM yetmez).
+    """
     sp = TRAIN_SPECS[key]
     if sp["cpu_ok"]:
         return True, ""
-    if hw.cuda_usable and hw.vram_gb >= sp["vram"] - 0.3:
+    if not hw.cuda_usable or hw.vram_gb < SWAP_MIN_VRAM - 0.3:
+        return False, "vram"
+    if hw.vram_gb >= sp["vram"] - 0.3:
         return True, ""
-    return False, "vram"
+    if hw.ram_total_gb + 0.5 < sp["ram"]:
+        return False, "ram"
+    return True, "swap"
 
 
 def train_base_dir(models_root, key):
@@ -5728,6 +5738,127 @@ class LoraTrainer:
         free_gpu_memory()
 
 
+class ParamSwapper:
+    """
+    RAM destekli çalıştırma ("blok takası"): modelin donmuş ağırlıkları RAM'de durur; bir parça (blok) çalışacağı
+    an ekran kartına kopyalanır, iş bitince RAM'deki kopyasına geri bağlanır. Eğitilen LoRA ağırlıkları, tamponlar ve
+    küçük parçalar hep ekran kartında kalır. Ekran kartında yer kaldıkça baştan itibaren parçalar kalıcı tutulur
+    (kart büyüdükçe hızlanır). Geri yayılım (backward), ileri geçişte kopyalanan GPU tensörlerini kullanır; gradyan
+    kontrol noktaları (checkpointing) her bloğu geri yayılımda yeniden çalıştırdığında kanca yeniden kopyalar.
+    """
+    SMALL = 32 * MB              # bundan küçük parçalar her zaman ekran kartında
+    MAX_UNIT = 400 * MB          # bundan büyük parçalar alt parçalarına bölünür
+
+    def __init__(self, model, device, budget_bytes, pin=True, small=None, max_unit=None):
+        torch = import_torch()
+        if small is not None:
+            self.SMALL = small
+        if max_unit is not None:
+            self.MAX_UNIT = max_unit
+        self.torch = torch
+        self.device = torch.device(device)
+        self.model = model
+        self.handles = []
+        self.units = []                       # [(modül, [(parametre, ram_kopyası)])]
+        seen = set()
+        units = []
+
+        def frozen_bytes(m, recurse=True):
+            return sum(p.numel() * p.element_size() for p in m.parameters(recurse=recurse)
+                       if not p.requires_grad and id(p) not in seen)
+
+        def walk(m):
+            own = [p for p in m.parameters(recurse=False) if not p.requires_grad and id(p) not in seen]
+            total = frozen_bytes(m)
+            if total <= self.MAX_UNIT or not list(m.children()):
+                ps = [p for p in m.parameters() if not p.requires_grad and id(p) not in seen]
+                for p in ps:
+                    seen.add(id(p))
+                if ps:
+                    units.append((m, ps))
+                return
+            if own:                            # alt modüllere inen bir modülün kendi doğrudan ağırlıkları
+                for p in own:
+                    seen.add(id(p))
+                units.append((m, own))
+            for c in m.children():
+                walk(c)
+
+        walk(model)
+        if pin:       # sabitlenmiş (pinned) bellek hızlıdır ama Windows'ta çok büyüğü sistemi sıkıştırır
+            total = sum(sum(p.numel() * p.element_size() for p in ps) for _m, ps in units)
+            pin = (total - budget_bytes) < ram_total_gb() * GB * 0.35
+        for b in model.buffers():
+            b.data = b.data.to(self.device)
+        for p in model.parameters():
+            if p.requires_grad:
+                p.data = p.data.to(self.device)
+        used = 0
+        swapped_bytes = 0
+        self.resident_bytes = 0
+        for m, ps in units:
+            size = sum(p.numel() * p.element_size() for p in ps)
+            if size <= self.SMALL or used + size <= budget_bytes:
+                for p in ps:
+                    p.data = p.data.to(self.device)
+                used += size
+                continue
+            pairs = []
+            for p in ps:
+                cpu = p.data.to("cpu")
+                if pin:
+                    try:
+                        cpu = cpu.pin_memory()
+                    except Exception:
+                        pin = False
+                p.data = cpu
+                pairs.append((p, cpu))
+            swapped_bytes += size
+            self.units.append((m, pairs))
+            self.handles.append(m.register_forward_pre_hook(self._make_pre(pairs)))
+            self.handles.append(m.register_forward_hook(self._make_post(pairs)))
+        self.resident_bytes = used
+        self.swapped_bytes = swapped_bytes
+
+    def _make_pre(self, pairs):
+        dev = self.device
+
+        def pre(_m, _args):
+            for p, cpu in pairs:
+                p.data = cpu.to(dev, non_blocking=True)
+        return pre
+
+    def _make_post(self, pairs):
+        def post(_m, _args, _out):
+            for p, cpu in pairs:
+                p.data = cpu          # GPU kopyası, geri yayılım için gerekiyorsa grafikte yaşamaya devam eder
+        return post
+
+    def remove(self, to="cpu"):
+        for h in self.handles:
+            h.remove()
+        self.handles = []
+        for _m, pairs in self.units:
+            for p, cpu in pairs:
+                p.data = cpu
+        self.units = []
+        if to is not None:
+            self.model.to(to)
+
+
+def gpu_free_bytes(device):
+    torch = import_torch()
+    try:
+        free, _total = torch.cuda.mem_get_info(torch.device(device))
+        return int(free)
+    except Exception:
+        return 0
+
+
+def module_bytes(m):
+    return sum(p.numel() * p.element_size() for p in m.parameters())
+
+
 class SDXLLoraTrainer(LoraTrainer):
     """SDXL LoRA eğitimi: iki metin kodlayıcı, ek zaman/boyut koşulları. VAE fp32 kodlar (SDXL VAE fp16'da bozulur)."""
 
@@ -5773,8 +5904,14 @@ class SDXLLoraTrainer(LoraTrainer):
             self.unet.enable_gradient_checkpointing()
         except Exception:
             pass
-        self.unet.to(self.device)
         self.unet.train()
+        self._on_device = False
+        self.swapper = None
+        self.swap_info = None
+        self.reserve = int(2.5 * GB)
+        if self.on_gpu and resolution is None and \
+                module_bytes(self.unet) + self.reserve > gpu_free_bytes(self.device):
+            self.res = int(TRAIN_SPECS["sdxl"]["res_swap"])      # RAM destekli: daha küçük ara sonuçlar
         self.opt = torch.optim.AdamW(self.params, lr=lr, weight_decay=1e-2)
         self.scaler = torch.amp.GradScaler("cuda") if self.on_gpu else None
         self.pred_type = self.noise_scheduler.config.get("prediction_type", "epsilon")
@@ -5785,6 +5922,25 @@ class SDXLLoraTrainer(LoraTrainer):
             self.vae_scale = 2 ** (len(self.vae.config.block_out_channels) - 1)
         except Exception:
             self.vae_scale = 8
+
+    def _ensure_unet(self):
+        if self._on_device:
+            return
+        self._on_device = True
+        if not self.on_gpu:
+            self.unet.to(self.device)
+            return
+        free_gpu_memory()
+        free = gpu_free_bytes(self.device)
+        if module_bytes(self.unet) + self.reserve <= free:
+            self.unet.to(self.device)
+            return
+        self.swapper = ParamSwapper(self.unet, self.device, max(0, free - self.reserve))
+        self.swap_info = (self.swapper.resident_bytes / GB, self.swapper.swapped_bytes / GB)
+
+    def prepare_device(self):
+        self._ensure_unet()
+        return self.swap_info
 
     def _encode_latent(self, x):
         return self.vae.encode(x.to(self.device, self.torch.float32)).latent_dist.sample() * self.vae.config.scaling_factor
@@ -5842,6 +5998,7 @@ class SDXLLoraTrainer(LoraTrainer):
 
     def step_sft(self, lat, emb, noise=None, t=None, weight=None):
         torch = self.torch
+        self._ensure_unet()
         prompt, pooled = emb
         lat = lat.to(self.device, self.wdtype)
         prompt = prompt.to(self.device, self.wdtype)
@@ -5887,9 +6044,11 @@ class SDXLLoraTrainer(LoraTrainer):
         from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
         sched = DPMSolverMultistepScheduler.from_config(self.noise_scheduler.config, use_karras_sigmas=True,
                                                         algorithm_type="dpmsolver++")
-        pipe = StableDiffusionXLPipeline(vae=self.vae, text_encoder=self.text_encoder,
-                                         text_encoder_2=self.text_encoder_2, tokenizer=self.tokenizer,
-                                         tokenizer_2=self.tokenizer_2, unet=self.unet, scheduler=sched)
+        self._ensure_unet()
+        dev = self.device
+        cls = type("AilsSampleXL", (StableDiffusionXLPipeline,), {"_execution_device": property(lambda _s: dev)})
+        pipe = cls(vae=self.vae, text_encoder=self.text_encoder, text_encoder_2=self.text_encoder_2,
+                   tokenizer=self.tokenizer, tokenizer_2=self.tokenizer_2, unet=self.unet, scheduler=sched)
         pipe.set_progress_bar_config(disable=True)
         size = int(size or self.res)
         self.vae.to(self.device)
@@ -5907,6 +6066,12 @@ class SDXLLoraTrainer(LoraTrainer):
         return img
 
     def close(self):
+        if self.swapper is not None:
+            try:
+                self.swapper.remove(to=None)
+            except Exception:
+                pass
+        self.swapper = None
         self.unet = self.vae = self.text_encoder = self.text_encoder_2 = None
         self.opt = None
         free_gpu_memory()
@@ -5971,6 +6136,9 @@ class FlowLoraTrainer(LoraTrainer):
             pass
         self.transformer.train()
         self._on_device = False
+        self.swapper = None
+        self.swap_info = None             # (ekran kartında GB, RAM'den taşınan GB) — RAM destekli ise
+        self.reserve = int(2.0 * GB)      # ara sonuçlar + LoRA + iyileştirici durumu için boş bırakılan VRAM
         self.opt = torch.optim.AdamW(self.params, lr=lr, weight_decay=1e-2)
         self.scaler = None
         self.pred_type = "flow"
@@ -5987,9 +6155,25 @@ class FlowLoraTrainer(LoraTrainer):
         return self._ctx.nullcontext()
 
     def _ensure_transformer(self):
-        if not self._on_device:
+        """Dönüştürücüyü ekran kartına alır; sığmıyorsa RAM destekli (blok takası) çalıştırır."""
+        if self._on_device:
+            return
+        self._on_device = True
+        if not self.on_gpu:
             self.transformer.to(self.device)
-            self._on_device = True
+            return
+        free_gpu_memory()
+        need = module_bytes(self.transformer)
+        free = gpu_free_bytes(self.device)
+        if need + self.reserve <= free:
+            self.transformer.to(self.device)
+            return
+        self.swapper = ParamSwapper(self.transformer, self.device, max(0, free - self.reserve))
+        self.swap_info = (self.swapper.resident_bytes / GB, self.swapper.swapped_bytes / GB)
+
+    def prepare_device(self):
+        self._ensure_transformer()
+        return self.swap_info
 
     def _encode_latent(self, x):
         torch = self.torch
@@ -6010,9 +6194,16 @@ class FlowLoraTrainer(LoraTrainer):
             return self._emb_cache[text]
         with torch.no_grad():
             if self.flux:
-                emb = self._pipe_cls._get_qwen3_prompt_embeds(self.text_encoder, self.tokenizer, [text],
-                                                              dtype=self.wdtype, device=self.device)
-                emb = emb.to("cpu")
+                msgs = [{"role": "user", "content": text}]
+                t = self.tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                                       enable_thinking=False)
+                ti = self.tokenizer(t, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
+                out = self.text_encoder(input_ids=ti["input_ids"].to(self.device),
+                                        attention_mask=ti["attention_mask"].to(self.device),
+                                        output_hidden_states=True, use_cache=False)
+                hs = torch.stack([out.hidden_states[k] for k in (9, 18, 27)], dim=1)
+                b, ch, ln, d = hs.shape
+                emb = hs.permute(0, 2, 1, 3).reshape(b, ln, ch * d).to("cpu", self.wdtype)
             else:
                 msgs = [{"role": "user", "content": text}]
                 t = self.tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
@@ -6031,15 +6222,15 @@ class FlowLoraTrainer(LoraTrainer):
             return self._emb_cache[text]
         if self.text_encoder is None:
             raise RuntimeError("text encoder already released")
-        self.text_encoder.to(self.device)
+        sw = self._te_on_device()
         try:
             return self._encode_text_on_device(text)
         finally:
-            self.text_encoder.to("cpu")
+            self._te_off(sw)
 
     def encode_texts(self, texts, progress_cb=None):
         """Tüm metinler (ve örnek görselin boş negatif metni) kodlanır; sonra metin kodlayıcı bellekten silinir."""
-        self.text_encoder.to(self.device)
+        sw = self._te_on_device()
         try:
             out = []
             for n, t in enumerate(texts):
@@ -6049,9 +6240,28 @@ class FlowLoraTrainer(LoraTrainer):
             self._encode_text_on_device("")
             return out
         finally:
-            self.text_encoder.to("cpu")
+            self._te_off(sw)
             self.text_encoder = None
             free_gpu_memory()
+
+    def _te_on_device(self):
+        """Metin kodlayıcı ekran kartına; sığmıyorsa RAM destekli. Dönüş: takasçı ya da None."""
+        if not self.on_gpu:
+            return None
+        free_gpu_memory()
+        need = module_bytes(self.text_encoder)
+        free = gpu_free_bytes(self.device)
+        if need + int(1.0 * GB) <= free:
+            self.text_encoder.to(self.device)
+            return None
+        return ParamSwapper(self.text_encoder, self.device, max(0, free - int(1.5 * GB)))
+
+    def _te_off(self, sw):
+        if sw is not None:
+            sw.remove(to="cpu")
+        elif self.text_encoder is not None:
+            self.text_encoder.to("cpu")
+        free_gpu_memory()
 
     def _sigmas(self, n, seq_len):
         torch = self.torch
@@ -6149,7 +6359,9 @@ class FlowLoraTrainer(LoraTrainer):
                       transformer=self.transformer)
         if self.flux:
             kwargs["is_distilled"] = False
-        pipe = self._pipe_cls(**kwargs)
+        dev = self.device
+        cls = type("AilsSamplePipe", (self._pipe_cls,), {"_execution_device": property(lambda _s: dev)})
+        pipe = cls(**kwargs)
         pipe.set_progress_bar_config(disable=True)
         size = int(size or self.res)
         self.vae.to(self.device)
@@ -6172,6 +6384,12 @@ class FlowLoraTrainer(LoraTrainer):
         return img
 
     def close(self):
+        if self.swapper is not None:
+            try:
+                self.swapper.remove(to=None)
+            except Exception:
+                pass
+        self.swapper = None
         self.transformer = self.vae = self.text_encoder = None
         self.opt = None
         free_gpu_memory()
@@ -6326,6 +6544,10 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     del lat_all, w_all
     embs = trainer.encode_texts(texts)
     sample_prompt = texts[0]
+    if hasattr(trainer, "prepare_device"):
+        sw = trainer.prepare_device()
+        if sw:
+            log(msg("tr_log_swap", gpu=sw[0], ram=sw[1]))
     base_steps = int(prev.get("steps", 0))
     info = {"name": tag, "tag": tag, "trigger": trigger, "base": model_key, "type": learn, "learn": learn,
             "dataset": slug, "images": n_img, "views": len(latents), "rank": preset["rank"], "res": trainer.res,

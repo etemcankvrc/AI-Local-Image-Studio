@@ -583,10 +583,15 @@
   "v2_base_note_sdxl": "1024 px'te eğitir. LoRA, SDXL ve kendi eklediğin SDXL modelleriyle çalışır.",
   "v2_base_note_flux2_klein_4b": "FLUX.2 [klein] base 4B üzerinde eğitir (bir kez indirilir, ~7.8 GB, Apache-2.0); LoRA hızlı FLUX.2 [klein] 4B ile kullanılır.",
   "v2_base_note_zimage_turbo": "Z-Image base üzerinde eğitir (bir kez indirilir, ~12.3 GB, Apache-2.0); LoRA Z-Image-Turbo ile kullanılır (etkisi zayıfsa gücünü 1.2–1.5 yap).",
-  "v2_base_vram": "⛔ {name} eğitimi NVIDIA ekran kartında en az {need:.0f} GB VRAM ister (bu bilgisayar: {have:.1f} GB).",
-  "v2_base_vram_q": "{name} eğitimi NVIDIA ekran kartında en az {need:.0f} GB bellek ister; bu bilgisayarda {have:.1f} GB var.\n\nBurada tamamlanamayacağı için başlatılmadı. SD 1.5'i seç (4 GB'ta çalışır) — ya da daha güçlü kartı olan bir bilgisayarda eğitip LoRA dosyasını loras klasörüne kopyala.",
+  "v2_base_vram": "⛔ {name} eğitimi en az {need:.1f} GB VRAM'li bir NVIDIA ekran kartı ister (bu bilgisayar: {have:.1f} GB).",
+  "v2_base_vram_q": "{name} eğitimi en az {need:.1f} GB belleği olan bir NVIDIA ekran kartı ister; bu bilgisayarda {have:.1f} GB var.\n\nBurada çalışmayacağı için başlatılmadı. SD 1.5'i seç (işlemcide de çalışır) — ya da NVIDIA kartı olan bir bilgisayarda eğitip LoRA dosyasını loras klasörüne kopyala.",
   "train_base_item": "{name} — yalnızca eğitim için (dönüştürücü), {lic}",
   "tr_log_base": "Eğitim modeli: {base}",
   "tr_log_oom_res": "⚠️ Ekran kartı belleği yetmedi — {res} px ile yeniden deneniyor…",
-  "tr_log_oom_final": "❌ En düşük çözünürlükte bile ekran kartı belleği yetmedi. GPU kullanan diğer programları (oyun, tarayıcıda video) kapat ya da daha küçük bir eğitim modeli seç."
+  "tr_log_oom_final": "❌ En düşük çözünürlükte bile ekran kartı belleği yetmedi. GPU kullanan diğer programları (oyun, tarayıcıda video) kapat ya da daha küçük bir eğitim modeli seç.",
+  "v2_base_swap": "RAM destekli, yavaş",
+  "v2_base_swap_note": "🐢 Kartın {have:.1f} GB (tam hız için {need:.0f} GB gerekir): model RAM'de durur ve ekran kartına parça parça taşınır — çalışır ama eğitim birkaç kat yavaş olur.",
+  "v2_base_ram": "⛔ {name} eğitimi en az {need:.0f} GB RAM ister (bu bilgisayar: {have:.0f} GB).",
+  "tr_log_swap": "🐢 RAM destekli eğitim: modelin {gpu:.1f} GB'ı ekran kartında duruyor, {ram:.1f} GB'ı her adımda RAM'den taşınıyor (daha yavaş ama sığıyor).",
+  "v2_base_need_ram": "≥ {gb:.0f} GB RAM"
 }

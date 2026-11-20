@@ -28,7 +28,10 @@ your own language into English prompts. The interface is available in **English,
   - **Light** mode saves a word card; **deep** mode trains a LoRA on the model you choose: **SD 1.5** (4 GB VRAM or
     CPU), **SDXL** (≥ 10 GB), **FLUX.2 [klein] 4B** (≥ 12 GB; trained on the Apache-2.0 *klein base 4B*, used with
     the fast model) or **Z-Image** (≥ 16 GB; trained on the Apache-2.0 *Z-Image base*, used with Z-Image-Turbo).
-    Choices that don't fit the GPU are marked and never started; out-of-memory retries at a lower resolution.
+    If the card is too small for full speed (e.g. FLUX.2 on 4 GB), training runs **RAM-assisted** (block swapping:
+    weights stay in RAM and are moved to the GPU piece by piece) — slower, but it works with ≥ 3.5 GB VRAM and enough
+    RAM (SDXL 16 GB, FLUX.2 24 GB, Z-Image 28 GB). Otherwise the choice is marked and never started;
+    out-of-memory retries at a lower resolution.
     **Self-learning** learns from your 👍 / 👎 ratings and an automatic judge (Diffusion-DPO, SD 1.5).
 - **Your own models:** drop a single-file SD 1.5 or SDXL model (`.safetensors`, e.g. from Civitai or Hugging Face)
   into `addons\models\` and it appears in the model list as 📦. The program never downloads them; `.ckpt` / `.pt`

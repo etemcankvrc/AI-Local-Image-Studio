@@ -582,11 +582,16 @@
   "v2_base_note_sdxl": "Trains at 1024 px. The LoRA works with SDXL and your own SDXL models.",
   "v2_base_note_flux2_klein_4b": "Trains on FLUX.2 [klein] base 4B (downloaded once, ~7.8 GB, Apache-2.0); the LoRA is used with the fast FLUX.2 [klein] 4B.",
   "v2_base_note_zimage_turbo": "Trains on Z-Image base (downloaded once, ~12.3 GB, Apache-2.0); the LoRA is used with Z-Image-Turbo (raise its weight to 1.2–1.5 if the effect is weak).",
-  "v2_base_vram": "⛔ {name} training needs at least {need:.0f} GB of VRAM on an NVIDIA card (this PC: {have:.1f} GB).",
-  "v2_base_vram_q": "{name} training needs at least {need:.0f} GB of graphics memory on an NVIDIA card; this PC has {have:.1f} GB.\n\nIt would not finish here, so it is not started. Choose SD 1.5 (works with 4 GB) — or train on a PC with a bigger card and copy the LoRA file into the loras folder.",
+  "v2_base_vram": "⛔ {name} training needs an NVIDIA card with at least {need:.1f} GB of VRAM (this PC: {have:.1f} GB).",
+  "v2_base_vram_q": "{name} training needs an NVIDIA card with at least {need:.1f} GB of graphics memory; this PC has {have:.1f} GB.\n\nIt would not run here, so it is not started. Choose SD 1.5 (also works on the CPU) — or train on a PC with an NVIDIA card and copy the LoRA file into the loras folder.",
   "train_base_item": "{name} — for training only (transformer), {lic}",
   "tr_log_base": "Training model: {base}",
   "tr_log_oom_res": "⚠️ Not enough graphics memory — trying again at {res} px…",
   "tr_log_oom_final": "❌ Not enough graphics memory even at the lowest resolution. Close other programs that use the GPU (games, video in the browser) or choose a smaller training model.",
+  "v2_base_swap": "RAM-assisted, slow",
+  "v2_base_swap_note": "🐢 Your card has {have:.1f} GB (full speed needs {need:.0f} GB): the model stays in RAM and is moved to the card piece by piece — it works, but training is several times slower.",
+  "v2_base_ram": "⛔ {name} training needs at least {need:.0f} GB of RAM (this PC: {have:.0f} GB).",
+  "tr_log_swap": "🐢 RAM-assisted training: {gpu:.1f} GB of the model stays on the graphics card, {ram:.1f} GB is moved from RAM at every step (slower, but it fits).",
+  "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
   "log_custom_missing": "The model file is no longer there: {path}"
 }

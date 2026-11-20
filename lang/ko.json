@@ -583,10 +583,15 @@
   "v2_base_note_sdxl": "1024px로 학습합니다. LoRA는 SDXL과 직접 추가한 SDXL 모델에서 작동합니다.",
   "v2_base_note_flux2_klein_4b": "FLUX.2 [klein] base 4B로 학습합니다 (한 번 다운로드, 약 7.8GB, Apache-2.0). LoRA는 빠른 FLUX.2 [klein] 4B에서 사용합니다.",
   "v2_base_note_zimage_turbo": "Z-Image base로 학습합니다 (한 번 다운로드, 약 12.3GB, Apache-2.0). LoRA는 Z-Image-Turbo에서 사용합니다 (효과가 약하면 강도를 1.2–1.5로).",
-  "v2_base_vram": "⛔ {name} 학습에는 NVIDIA 그래픽카드 VRAM이 최소 {need:.0f}GB 필요합니다 (이 PC: {have:.1f}GB).",
-  "v2_base_vram_q": "{name} 학습에는 NVIDIA 그래픽카드 메모리가 최소 {need:.0f}GB 필요하지만 이 PC에는 {have:.1f}GB가 있습니다.\n\n여기서는 끝까지 진행할 수 없어 시작하지 않습니다. SD 1.5를 선택하거나(4GB에서 작동) 더 큰 그래픽카드가 있는 PC에서 학습한 뒤 LoRA 파일을 loras 폴더로 복사하세요.",
+  "v2_base_vram": "⛔ {name} 학습에는 VRAM {need:.1f}GB 이상인 NVIDIA 그래픽카드가 필요합니다 (이 PC: {have:.1f}GB).",
+  "v2_base_vram_q": "{name} 학습에는 메모리 {need:.1f}GB 이상인 NVIDIA 그래픽카드가 필요하지만 이 PC에는 {have:.1f}GB가 있습니다.\n\n여기서는 실행되지 않으므로 시작하지 않습니다. SD 1.5를 선택하거나(CPU에서도 작동) NVIDIA 그래픽카드가 있는 PC에서 학습한 뒤 LoRA 파일을 loras 폴더로 복사하세요.",
   "train_base_item": "{name} — 학습 전용 (트랜스포머), {lic}",
   "tr_log_base": "학습 모델: {base}",
   "tr_log_oom_res": "⚠️ 그래픽카드 메모리 부족 — {res}px로 다시 시도합니다…",
-  "tr_log_oom_final": "❌ 가장 낮은 해상도에서도 그래픽카드 메모리가 부족합니다. GPU를 쓰는 다른 프로그램(게임, 브라우저 동영상)을 닫거나 더 작은 학습 모델을 선택하세요."
+  "tr_log_oom_final": "❌ 가장 낮은 해상도에서도 그래픽카드 메모리가 부족합니다. GPU를 쓰는 다른 프로그램(게임, 브라우저 동영상)을 닫거나 더 작은 학습 모델을 선택하세요.",
+  "v2_base_swap": "RAM 보조, 느림",
+  "v2_base_swap_note": "🐢 그래픽카드가 {have:.1f}GB입니다 (최대 속도에는 {need:.0f}GB 필요). 모델은 RAM에 두고 그래픽카드로 조금씩 옮깁니다 — 작동하지만 학습이 몇 배 느립니다.",
+  "v2_base_ram": "⛔ {name} 학습에는 RAM이 최소 {need:.0f}GB 필요합니다 (이 PC: {have:.0f}GB).",
+  "tr_log_swap": "🐢 RAM 보조 학습: 모델 중 {gpu:.1f}GB는 그래픽카드에 두고 {ram:.1f}GB는 매 단계 RAM에서 옮깁니다 (느리지만 들어갑니다).",
+  "v2_base_need_ram": "RAM {gb:.0f}GB 이상"
 }
