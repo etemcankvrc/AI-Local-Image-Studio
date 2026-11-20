@@ -662,6 +662,8 @@ EN = {
     "v2_base_ram": "⛔ {name} training needs at least {need:.0f} GB of RAM (this PC: {have:.0f} GB).",
     "tr_log_swap": "🐢 RAM-assisted training: {gpu:.1f} GB of the model stays on the graphics card, {ram:.1f} GB is moved from RAM at every step (slower, but it fits).",
     "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
+    "v2_status_stopping": "Stopping — saving the latest state…",
+    "tr_log_stopping": "⏹ Stopping: the current step is cancelled, the LoRA is saved as it is (no sample image)…",
     "log_custom_missing": "The model file is no longer there: {path}",
 }
 
@@ -1743,7 +1745,7 @@ class StyleStudioWindow:
 
         btns = tk.Frame(w, bg=BG)
         btns.pack(fill="x", padx=16, pady=10)
-        self.b_stop = ttk.Button(btns, text=t("v2_stop"), command=self.app.abort.set)
+        self.b_stop = ttk.Button(btns, text=t("v2_stop"), command=self.on_stop)
         self.b_stop.pack(side="left")
         ttk.Button(btns, text=t("adv_close"), command=self.close).pack(side="right")
 
@@ -1806,6 +1808,13 @@ class StyleStudioWindow:
                 core.save_dataset(self.paths, slug, data)
                 self.app.log(t("v2_log_learn", name=data.get("name", slug), kind=t("learn_" + learn)))
         self.update_state()
+
+    def on_stop(self):
+        """Durdur: iş hemen haber alır; eğitimde son durum kaydedilip çıkılır."""
+        if self.app.running() and not self.app.abort.is_set():
+            self.app.abort.set()
+            self.app.status("v2_status_stopping")
+            self.app.log(t("tr_log_stopping"))
 
     def _base_items(self):
         """Eğitim modelleri: ad, gereken VRAM ve bu bilgisayarda çalışıp çalışmayacağı."""
@@ -2369,13 +2378,29 @@ class StyleStudioWindow:
         app = self.app
         app.status("v2_status_train")
 
-        def prog(frac, steps, elapsed):
+        live = {"steps": 0, "elapsed": 0.0, "at": time.time(), "frac": None, "on": True}
+
+        def show(frac, steps, elapsed):
             txt = t("tr_counter", steps=steps, time=fmt_duration(elapsed))
             if frac is None:
                 app.post(app.set_indeterminate, txt)
             else:
                 app.progress(frac * 100.0, txt)
             app.post(self.set_progress, frac or 0.0, 1, txt)
+
+        def prog(frac, steps, elapsed):
+            live.update(steps=steps, elapsed=elapsed, at=time.time(), frac=frac)
+            show(frac, steps, elapsed)
+
+        def tick():
+            # adımlar uzun sürse de (RAM destekli eğitim) süre sayacı her saniye ilerler
+            if not live["on"]:
+                return
+            if not app.abort.is_set():
+                el = live["elapsed"] + (time.time() - live["at"])
+                show(live["frac"], live["steps"], el)
+            app.r.after(1000, tick)
+        app.post(lambda: app.r.after(1000, tick))
 
         def on_sample(path, info):
             meta = {"model": "LoRA: %s" % info.get("name", ""), "stage": "sample", "steps": info.get("steps"),
@@ -2387,6 +2412,15 @@ class StyleStudioWindow:
         wd = core.RamWatchdog(app.abort, app.hw.ram_total_gb)
         base = kw.get("model_key") or "sd15"
         tries = (None,) + tuple(core.TRAIN_SPECS[base]["fallback"])
+        try:
+            info = self._train_loop(fn, kw, tries, wd, prog, on_sample)
+        finally:
+            live["on"] = False
+        self._train_done(info, wd)
+
+    def _train_loop(self, fn, kw, tries, wd, prog, on_sample):
+        app = self.app
+        info = None
         for n_try, res in enumerate(tries):
             try:
                 with wd:
@@ -2415,6 +2449,10 @@ class StyleStudioWindow:
                     app.log(t("tr_log_oom_final"))
                     raise JobFail()
                 raise
+        return info
+
+    def _train_done(self, info, wd):
+        app = self.app
         if wd.triggered:
             app.log(t("log_ram_guard", free=wd.free_at_trigger))
         app.log(t("tr_log_done", name=info.get("name", ""), steps=info.get("steps", 0), path=info.get("path", "")))
@@ -4203,7 +4241,9 @@ class ImageStudio:
     # ------------------------------------------------------------- generation
     def on_start(self):
         if self.running():
-            self.abort.set()
+            if not self.abort.is_set():
+                self.abort.set()
+                self.status("v2_status_stopping")
             return
         text = self.txt_prompt.get("1.0", "end").strip()
         if not text:

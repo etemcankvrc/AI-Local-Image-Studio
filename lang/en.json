@@ -593,5 +593,7 @@
   "v2_base_ram": "⛔ {name} training needs at least {need:.0f} GB of RAM (this PC: {have:.0f} GB).",
   "tr_log_swap": "🐢 RAM-assisted training: {gpu:.1f} GB of the model stays on the graphics card, {ram:.1f} GB is moved from RAM at every step (slower, but it fits).",
   "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
+  "v2_status_stopping": "Stopping — saving the latest state…",
+  "tr_log_stopping": "⏹ Stopping: the current step is cancelled, the LoRA is saved as it is (no sample image)…",
   "log_custom_missing": "The model file is no longer there: {path}"
 }

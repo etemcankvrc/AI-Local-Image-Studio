@@ -5541,6 +5541,13 @@ class LoraTrainer:
             free_gpu_memory()
         return (out, weights) if with_weights else out
 
+    def _abort_cb(self, _pipe, _i, _t, kw):
+        """Örnek görsel üretirken Durdur'a basılırsa hemen çık."""
+        ab = getattr(self, "abort_event", None)
+        if ab is not None and ab.is_set():
+            raise AbortedError("user")
+        return kw
+
     def _encode_latent(self, x):
         """Görsel → modelin gizli uzayı (SD 1.5: VAE örneği × ölçek)."""
         return self.vae.encode(x.to(self.device, self.wdtype)).latent_dist.sample() * self.vae.config.scaling_factor
@@ -5725,7 +5732,8 @@ class LoraTrainer:
         try:
             with torch.no_grad(), self._autocast():
                 img = pipe(prompt, negative_prompt=negative or None, num_inference_steps=steps, guidance_scale=cfg,
-                           width=size, height=size, generator=torch.Generator("cpu").manual_seed(int(seed))).images[0]
+                           width=size, height=size, generator=torch.Generator("cpu").manual_seed(int(seed)),
+                           callback_on_step_end=self._abort_cb).images[0]
         finally:
             self.unet.train()
             self.vae.to("cpu")
@@ -5750,8 +5758,9 @@ class ParamSwapper:
     SMALL = 32 * MB              # bundan küçük parçalar her zaman ekran kartında
     MAX_UNIT = 400 * MB          # bundan büyük parçalar alt parçalarına bölünür
 
-    def __init__(self, model, device, budget_bytes, pin=True, small=None, max_unit=None):
+    def __init__(self, model, device, budget_bytes, pin=True, small=None, max_unit=None, abort_event=None):
         torch = import_torch()
+        self.abort_event = abort_event
         if small is not None:
             self.SMALL = small
         if max_unit is not None:
@@ -5827,6 +5836,9 @@ class ParamSwapper:
         dev = self.device
 
         def pre(_m, _args):
+            ab = self.abort_event
+            if ab is not None and ab.is_set():
+                raise AbortedError("user")      # Durdur'a basıldı: adımın ortasında bile hemen çık
             for p, cpu in pairs:
                 p.data = cpu.to(dev, non_blocking=True)
         return pre
@@ -5953,7 +5965,8 @@ class SDXLLoraTrainer(LoraTrainer):
         if module_bytes(self.unet) + self.reserve <= free:
             self.unet.to(self.device)
             return
-        self.swapper = ParamSwapper(self.unet, self.device, max(0, free - self.reserve))
+        self.swapper = ParamSwapper(self.unet, self.device, max(0, free - self.reserve),
+                                    abort_event=getattr(self, "abort_event", None))
         self.swap_info = (self.swapper.resident_bytes / GB, self.swapper.swapped_bytes / GB)
 
     def prepare_device(self):
@@ -6075,7 +6088,8 @@ class SDXLLoraTrainer(LoraTrainer):
         try:
             with torch.no_grad(), self._autocast():
                 img = pipe(prompt, negative_prompt=negative or None, num_inference_steps=steps, guidance_scale=cfg,
-                           width=size, height=size, generator=torch.Generator("cpu").manual_seed(int(seed))).images[0]
+                           width=size, height=size, generator=torch.Generator("cpu").manual_seed(int(seed)),
+                           callback_on_step_end=self._abort_cb).images[0]
         finally:
             self.unet.train()
             self.vae.to("cpu")
@@ -6186,7 +6200,8 @@ class FlowLoraTrainer(LoraTrainer):
         if need + self.reserve <= free:
             self.transformer.to(self.device)
             return
-        self.swapper = ParamSwapper(self.transformer, self.device, max(0, free - self.reserve))
+        self.swapper = ParamSwapper(self.transformer, self.device, max(0, free - self.reserve),
+                                    abort_event=getattr(self, "abort_event", None))
         self.swap_info = (self.swapper.resident_bytes / GB, self.swapper.swapped_bytes / GB)
 
     def prepare_device(self):
@@ -6251,7 +6266,10 @@ class FlowLoraTrainer(LoraTrainer):
         sw = self._te_on_device()
         try:
             out = []
+            ab = getattr(self, "abort_event", None)
             for n, t in enumerate(texts):
+                if ab is not None and ab.is_set():
+                    raise AbortedError("user")
                 out.append(self._encode_text_on_device(t))
                 if progress_cb:
                     progress_cb(n + 1, len(texts))
@@ -6273,7 +6291,8 @@ class FlowLoraTrainer(LoraTrainer):
             self.text_encoder.to(self.device)
             return None
         # metin kodlayıcı yalnızca bir kez, kısa süre çalışır: sabitlenmiş bellek kullanılmaz (RAM'i kilitlemesin)
-        return ParamSwapper(self.text_encoder, self.device, max(0, free - int(1.5 * GB)), pin=False)
+        return ParamSwapper(self.text_encoder, self.device, max(0, free - int(1.5 * GB)), pin=False,
+                            abort_event=getattr(self, "abort_event", None))
 
     def _te_off(self, sw):
         if sw is not None:
@@ -6386,16 +6405,24 @@ class FlowLoraTrainer(LoraTrainer):
         self.vae.to(self.device)
         self.transformer.eval()
         g = torch.Generator("cpu").manual_seed(int(seed))
+        ab = getattr(self, "abort_event", None)
+
+        def _cb(_p, _i, _t, kw):
+            if ab is not None and ab.is_set():
+                raise AbortedError("user")
+            return kw
         try:
             with torch.no_grad(), self._autocast():
                 if self.flux:
                     img = pipe(prompt_embeds=pos.to(self.device, self.wdtype),
                                negative_prompt_embeds=neg.to(self.device, self.wdtype), num_inference_steps=steps,
-                               guidance_scale=cfg, width=size, height=size, generator=g).images[0]
+                               guidance_scale=cfg, width=size, height=size, generator=g,
+                               callback_on_step_end=_cb).images[0]
                 else:
                     img = pipe(prompt_embeds=[pos.to(self.device, self.wdtype)],
                                negative_prompt_embeds=[neg.to(self.device, self.wdtype)], num_inference_steps=steps,
-                               guidance_scale=cfg, width=size, height=size, generator=g).images[0]
+                               guidance_scale=cfg, width=size, height=size, generator=g,
+                               callback_on_step_end=_cb).images[0]
         finally:
             self.transformer.train()
             self.vae.to("cpu")
@@ -6507,6 +6534,7 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     if name != base_name and os.path.exists(os.path.join(lora_dir, base_name + ".safetensors")):
         log(msg("tr_log_keep_old", old=base_name + ".safetensors", new=name + ".safetensors"))
     trainer = make_trainer(paths, model_key, device, rank=preset["rank"], lr=preset["lr"], resolution=resolution)
+    trainer.abort_event = abort_event
     trainer.noise_offset = preset["noise_offset"]
     if prev:
         try:
@@ -6577,10 +6605,10 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     losses = []
     log(msg("tr_log_train", trigger=trigger))
 
-    def checkpoint(final=False):
+    def checkpoint(final=False, stopped=False):
         info.update(steps=base_steps + trainer.steps, updated=time.strftime("%Y-%m-%d %H:%M"),
                     loss=round(sum(losses[-200:]) / max(1, len(losses[-200:])), 5) if losses else None)
-        if sample_each:
+        if sample_each and not stopped:
             try:
                 d = os.path.join(own_lora_dir(paths), name + "_samples")
                 os.makedirs(d, exist_ok=True)
@@ -6589,6 +6617,8 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
                 info["sample"] = sp
                 if on_sample:
                     on_sample(sp, info)
+            except AbortedError:
+                stopped = True              # örnek görsel yarıda kaldı: LoRA yine de kaydedilir
             except Exception as e:
                 if is_oom_error(e):
                     log(msg("tr_log_sample_oom"))
@@ -6596,23 +6626,45 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
                     raise
         trainer.save(out, info)
         log(msg("tr_log_saved_final" if final else "tr_log_saved", steps=info["steps"], loss=info.get("loss") or 0.0))
+        return stopped
 
     reason = None
+    last_report = [0.0]
+
+    def report(force=False):
+        now = time.monotonic()
+        if force or now - last_report[0] >= 1.0:       # adım ne kadar hızlı olursa olsun en çok saniyede bir
+            last_report[0] = now
+            _train_progress(progress_cb, ck, base_steps + trainer.steps)
+
     try:
+        report(force=True)
         while True:
             reason = ck.should_stop()
             if reason:
                 break
             i = _r.randrange(len(latents))
-            losses.append(trainer.step_sft(latents[i], embs[i], weight=weights[i]))
-            if trainer.steps % 10 == 0:
-                _train_progress(progress_cb, ck, base_steps + trainer.steps)
+            try:
+                losses.append(trainer.step_sft(latents[i], embs[i], weight=weights[i]))
+            except AbortedError:
+                try:
+                    trainer.opt.zero_grad(set_to_none=True)     # yarım kalan adım öğretilmez
+                except Exception:
+                    pass
+                reason = "stop"
+                break
+            report()
             if trainer.steps % 200 == 0:
                 log(msg("tr_log_step", steps=base_steps + trainer.steps,
                         loss=sum(losses[-200:]) / len(losses[-200:])))
             if ck.checkpoint_due():
-                checkpoint()
-        checkpoint(final=True)
+                if checkpoint():
+                    reason = "stop"
+                    break
+        report(force=True)
+        if reason == "stop":
+            log(msg("tr_log_stopping"))
+        checkpoint(final=True, stopped=(reason == "stop"))
     finally:
         trainer.close()
     info["stop_reason"] = reason

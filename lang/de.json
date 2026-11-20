@@ -593,5 +593,7 @@
   "v2_base_swap_note": "🐢 Deine Karte hat {have:.1f} GB (volle Geschwindigkeit braucht {need:.0f} GB): Das Modell bleibt im RAM und wird stückweise auf die Karte geladen — es funktioniert, aber das Training ist mehrfach langsamer.",
   "v2_base_ram": "⛔ {name}-Training braucht mindestens {need:.0f} GB RAM (dieser PC: {have:.0f} GB).",
   "tr_log_swap": "🐢 Training mit RAM-Unterstützung: {gpu:.1f} GB des Modells bleiben auf der Grafikkarte, {ram:.1f} GB werden bei jedem Schritt aus dem RAM geladen (langsamer, passt aber).",
-  "v2_base_need_ram": "≥ {gb:.0f} GB RAM"
+  "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
+  "v2_status_stopping": "Wird gestoppt — letzter Stand wird gespeichert…",
+  "tr_log_stopping": "⏹ Wird gestoppt: Der laufende Schritt wird abgebrochen, die LoRA wird im aktuellen Stand gespeichert (ohne Beispielbild)…"
 }

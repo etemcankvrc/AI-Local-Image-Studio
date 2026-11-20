@@ -593,5 +593,7 @@
   "v2_base_swap_note": "🐢 Kartın {have:.1f} GB (tam hız için {need:.0f} GB gerekir): model RAM'de durur ve ekran kartına parça parça taşınır — çalışır ama eğitim birkaç kat yavaş olur.",
   "v2_base_ram": "⛔ {name} eğitimi en az {need:.0f} GB RAM ister (bu bilgisayar: {have:.0f} GB).",
   "tr_log_swap": "🐢 RAM destekli eğitim: modelin {gpu:.1f} GB'ı ekran kartında duruyor, {ram:.1f} GB'ı her adımda RAM'den taşınıyor (daha yavaş ama sığıyor).",
-  "v2_base_need_ram": "≥ {gb:.0f} GB RAM"
+  "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
+  "v2_status_stopping": "Durduruluyor — son durum kaydediliyor…",
+  "tr_log_stopping": "⏹ Durduruluyor: o anki adım iptal edildi, LoRA olduğu hâliyle kaydediliyor (örnek görsel yok)…"
 }

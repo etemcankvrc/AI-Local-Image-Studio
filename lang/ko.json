@@ -593,5 +593,7 @@
   "v2_base_swap_note": "🐢 그래픽카드가 {have:.1f}GB입니다 (최대 속도에는 {need:.0f}GB 필요). 모델은 RAM에 두고 그래픽카드로 조금씩 옮깁니다 — 작동하지만 학습이 몇 배 느립니다.",
   "v2_base_ram": "⛔ {name} 학습에는 RAM이 최소 {need:.0f}GB 필요합니다 (이 PC: {have:.0f}GB).",
   "tr_log_swap": "🐢 RAM 보조 학습: 모델 중 {gpu:.1f}GB는 그래픽카드에 두고 {ram:.1f}GB는 매 단계 RAM에서 옮깁니다 (느리지만 들어갑니다).",
-  "v2_base_need_ram": "RAM {gb:.0f}GB 이상"
+  "v2_base_need_ram": "RAM {gb:.0f}GB 이상",
+  "v2_status_stopping": "중지 중 — 마지막 상태를 저장합니다…",
+  "tr_log_stopping": "⏹ 중지 중: 현재 단계를 취소하고 LoRA를 현재 상태로 저장합니다 (예시 이미지 없음)…"
 }
