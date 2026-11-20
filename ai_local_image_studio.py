@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 
 def _app_dir():
@@ -2049,6 +2049,8 @@ class StyleStudioWindow:
         if st["stopped"]:
             self.app.log(t("v2_log_web_stopped"))
         self.app.post(self.set_progress, 1, 1, msg)
+        if st["added"]:
+            self._collage_check(slug, can_cancel=False)
         self.app.status("status_done")
 
     def _update_counts(self):
@@ -2135,6 +2137,14 @@ class StyleStudioWindow:
     def job_analysis(self, mode, slug, plan, opts):
         app = self.app
         m15 = core.IMAGE_MODEL_BY_KEY["sd15"]
+        if mode in ("light", "deep"):
+            if not self._collage_check(slug, can_cancel=True):
+                app.status("status_done")
+                return
+            if not (core.load_dataset(self.paths, slug) or {}).get("items"):
+                app.log(t("v2_start_empty"))
+                app.status("status_done")
+                return
         if not core.engine_status(app.paths):
             if not plan.get("engine"):
                 raise JobFail()
@@ -2359,6 +2369,7 @@ class StyleStudioWindow:
             data = core.load_dataset(self.paths, slug)
             app.log(t("v2_log_import_total", added=added) + "  " +
                     t("v2_log_named", base=core.dataset_file_base(data, slug)))
+            self._collage_check(slug, can_cancel=False)
             if self.v2.get("auto_caption", True):
                 app.after_job = lambda: self._auto_caption(slug)
         app.status("status_done")
@@ -2366,6 +2377,44 @@ class StyleStudioWindow:
     def _ask_videos(self, n, size_gb, k):
         parent = self.w if self.alive() else self.app.r
         return messagebox.askyesno(APP_NAME, t("v2_videos_q", n=n, gb=size_gb, k=k), parent=parent)
+
+    def _ask_collage(self, names, can_cancel):
+        parent = self.w if self.alive() else self.app.r
+        shown = "\n".join("• " + x for x in names[:8]) + ("\n• …" if len(names) > 8 else "")
+        text = t("v2_collage_q", n=len(names), names=shown)
+        if can_cancel:
+            return messagebox.askyesnocancel(APP_NAME, text + "\n" + t("v2_collage_cancel"), parent=parent)
+        return messagebox.askyesno(APP_NAME, text, parent=parent)
+
+    def _collage_check(self, slug, can_cancel):
+        """
+        Kolaj / bölünmüş ekran gibi görünen görselleri bulur ve kullanıcıya sorar (iş thread'inde çalışır).
+        False: kullanıcı eğitimi iptal etti.
+        """
+        app = self.app
+        app.status("v2_status_collage")
+        try:
+            found = core.find_collage_items(self.paths, slug, abort_event=app.abort,
+                                            progress_cb=lambda a, b: self._prog(a, b, t("v2_prog_collage", a=a, b=b)))
+        finally:
+            self._finish(None)
+        if not found:
+            return True
+        files = [it.get("file") for it in found]
+        ans = app.call_ui(self._ask_collage, [os.path.basename(f or "") for f in files], can_cancel)
+        if ans is None:
+            if can_cancel:
+                app.log(t("v2_log_collage_cancel"))
+                return False
+            ans = False
+        if ans:
+            n = core.exclude_dataset_items(self.paths, slug, files)
+            app.log(t("v2_log_collage_out", n=n, folder=os.path.join(core._ds_dir(self.paths, slug), core.EXCLUDED_DIR)))
+        else:
+            core.keep_dataset_items(self.paths, slug, files)
+            app.log(t("v2_log_collage_kept", n=len(files)))
+        self._finish(None)
+        return True
 
     def _ensure_cv2(self):
         """Videodan kare çıkarmak için OpenCV (programın ortamında). Yoksa onayla kurulur. (İş thread'inde çalışır.)"""

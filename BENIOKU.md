@@ -1,8 +1,16 @@
-# 🎨 AI Local Image Studio v1.3.0
+# 🎨 AI Local Image Studio v1.3.1
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.3.1'de yeni — kolaj / bölünmüş ekran kontrolü
+
+- Tek görselde birden fazla kare olan görseller (kolajlar, yan yana ya da üst üste bölünmüş ekranlar, bölünmüş ekranlı videolardan çıkan kareler) eğitimi bozar: model bu düzeni de öğrenir ve görselleri bölmeli çizer.
+- Program artık bu görselleri bulur ve sorar: **Evet** → eğitimden çıkarılır, **Hayır** → kalır (bunlar için bir daha sorulmaz).
+  - Kontrol, içe aktarma (klasör, dosya, video, internet) bittiğinde ve eğitim başlarken yapılır. Eğitim başlarken **İptal** de seçilebilir.
+  - Çıkarılan dosyalar silinmez, veri setinin `excluded` klasörüne taşınır. Kendi klasörünüzden bağlantı olarak eklenen dosyalara hiç dokunulmaz, yalnızca veri setinden çıkarılır.
+  - Algılama ek model indirmez; görüntünün ortasındaki düz, tam boy sınırlara ve tek renkli ayırıcı şeritlere bakar. Tuğla, fayans gibi desenler kolaj sayılmaz. Nadiren yanılabilir; bu yüzden dosya adları gösterilir ve karar size bırakılır.
 
 ## v1.3.0'da yeni — yüz modu
 
@@ -210,7 +218,7 @@ D:\AI Local Image Studio\
 | CPython 3.12 (python-build-standalone) | PSF-2.0 | Programa özel Python (isteğe bağlı) |
 | OpenCV (aynı paket) + içindeki FFmpeg | Apache-2.0 + LGPL-2.1 (dinamik) | Videodan kare çıkarma |
 
-⚠️ OpenRAIL lisanslarının **kullanım kısıtlamaları** (Ek A) son kullanıcıya da geçer: bu modellerle görsel üreten herkes bu kısıtlamalara uymak zorundadır. Programın kaynak kodu **Apache-2.0** lisanslıdır (depodaki [LICENSE](LICENSE)).
+⚠️ OpenRAIL lisanslarının **kullanım kısıtlamaları** (Ek A) son kullanıcıya da geçer: bu modellerle görsel üreten herkes bu kısıtlamalara uymak zorundadır. Programın kaynak kodu **Apache-2.0** lisanslıdır (depodaki [LICENSE](../LICENSE)).
 
 ## 4 GB VRAM + 32 GB RAM test listesi
 
@@ -255,6 +263,10 @@ D:\AI Local Image Studio\
 19. **v1.3.0 — yüz modu:** Kendi yüzünüzün 15–30 fotoğrafı → tür "👤 Yüz", mod "Derin" → BAŞLAT.
     - İzin sorusu bir kez çıkmalı.
     - Log'da "👤 N görselde yüz bulunup kesildi" yazmalı. LoRA penceresinde "👤 Program · Yüz" görünmeli.
+
+20. **v1.3.1 — kolaj:** İki-üç kolaj ya da bölünmüş ekran görüntüsünü normal fotoğraflarla birlikte içe aktarın.
+    - İçe aktarma bitince kolajlar için soru çıkmalı. Evet → dosyalar `excluded` klasörüne taşınmalı.
+    - Eğitimi başlatırken yeni kolaj varsa Evet/Hayır/İptal sorusu çıkmalı. Hayır dediklerinizi bir daha sormamalı.
 
 Sorun çıkarsa veri klasöründeki `logs\ails.log` (ilk kurulumda `logs\setup.log`) dosyasını gönderin.
 

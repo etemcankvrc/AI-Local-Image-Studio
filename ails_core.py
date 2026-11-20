@@ -3199,7 +3199,7 @@ WEB_MAX_PER_BATCH = 500
 WEB_MAX_MB = 25
 WEB_MIN_DELAY = 1.0
 # Wikimedia vb. sunucular, kim olduğunu ve iletişim adresini söyleyen bir User-Agent ister.
-APP_UA = "AILocalImageStudio/1.3 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
+APP_UA = "AILocalImageStudio/1.3.1 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
 
 # Openverse (WordPress): Wikimedia, Flickr, müzeler vb. kaynaklardaki AÇIK LİSANSLI görsellerde arama.
 # Anahtarsız kullanım sınırları (Openverse kaynak kodundaki varsayılanlar): sayfa başına en fazla 20 sonuç,
@@ -3315,6 +3315,172 @@ def list_datasets(paths):
         out.append({"slug": slug, "name": d.get("name", slug), "tag": d.get("tag", ""), "learn": d["learn"],
                     "created": d.get("created", ""), "path": _ds_dir(paths, slug), **st})
     return out
+
+
+# -----------------------------------------------------------------------------
+# Kolaj / bölünmüş ekran algılama: birden fazla kare yan yana ya da üst üste konmuş görseller.
+# Model bu düzeni de öğrenir ve görselleri bölmeli çizer; eğitimden önce kullanıcıya sorulur.
+# Yalnızca Pillow + numpy (ek model yok). Görüntünün ortasında tam boy, tek piksellik düz bir
+# sınır arar; iki yanı farklı içerikse "dikiş" sayar. Tuğla/satranç gibi tekrar eden desenler elenir.
+# -----------------------------------------------------------------------------
+COLLAGE_SIDE = 320
+COLLAGE_EDGE = 16          # komşu satırlar arası parlaklık farkı (0-255)
+COLLAGE_SIDE_DIFF = 25     # dikişin iki yanındaki şeritlerin ortalama farkı: farklı kareler = yüksek
+COLLAGE_MIN_COVER = 0.8    # dikiş görüntünün en az bu kadarında kesintisiz olmalı (kapı/çizgi kenarları elenir)
+COLLAGE_MAX_SEAMS = 4      # bir yönde bundan fazla düz çizgi = desen (tuğla, ızgara), kolaj değil
+EXCLUDED_DIR = "excluded"
+
+
+def _collage_seams(a, lo=0.15, hi=0.85):
+    """
+    a: gri görüntü (H×W float). Dönüş: (düz çizgi sayısı, dikişler). Düz çizgi: tam genişlikte, tek piksellik
+    keskin sınır. Dikiş: iki yanı da farklı içerik olan düz çizgi.
+    """
+    import numpy as np
+    H, W = a.shape
+    if H < 40 or W < 40:
+        return 0, []
+    d = np.zeros((H, W), np.float32)
+    d[1:-1] = np.abs(a[2:] - a[:-2])
+    cov = (d > COLLAGE_EDGE).mean(axis=1)
+    lines, hits = [], []
+    for y in range(max(9, int(H * lo)), min(H - 9, int(H * hi))):
+        c = float(cov[y])
+        if c < 0.5:
+            continue
+        nb = np.r_[cov[max(0, y - 12):max(0, y - 4)], cov[y + 5:y + 13]]
+        if nb.size == 0 or c - float(nb.max()) < 0.3:
+            continue
+        lines.append(y)
+        if c < COLLAGE_MIN_COVER:
+            continue
+        side = float(np.abs(a[y - 8:y - 2].mean(0) - a[y + 3:y + 9].mean(0)).mean())
+        if side >= COLLAGE_SIDE_DIFF:
+            hits.append(y)
+
+    # Ayırıcı şerit: kareler arasında tek renk, ince, tam genişlikte bir bant (beyaz/siyah çerçeve).
+    std = a.std(axis=1)
+    flat = std < 6.0
+    y, max_run = max(9, int(H * lo)), max(3, int(H * 0.06))
+    while y < min(H - 9, int(H * hi)):
+        if not flat[y]:
+            y += 1
+            continue
+        r0 = y
+        while y < H and flat[y]:
+            y += 1
+        r1 = y - 1
+        if r1 - r0 + 1 > max_run or r0 < 12 or r1 > H - 13:
+            continue
+        above, below = a[r0 - 10:r0 - 1], a[r1 + 2:r1 + 11]
+        if float(above.std(axis=1).mean()) < 15 or float(below.std(axis=1).mean()) < 15:
+            continue
+        band = float(a[r0:r1 + 1].mean())
+        if abs(float(above[-3:].mean()) - band) < 12 and abs(float(below[:3].mean()) - band) < 12:
+            continue    # şeridin iki yanı da aynı renk: ayırıcı değil, görüntünün bir parçası
+        hits.append((r0 + r1) // 2)
+        lines.append((r0 + r1) // 2)
+    hits.sort()
+    lines.sort()
+
+    def group(ys):
+        out = []
+        for y in ys:
+            if not out or y - out[-1] > 3:
+                out.append(y)
+        return out
+    return len(group(lines)), group(hits)
+
+
+def looks_like_collage(path):
+    """Görsel kolaj / bölünmüş ekran gibi mi? Okunamazsa False (karar kullanıcıya bırakılır)."""
+    try:
+        import numpy as np
+        from PIL import Image
+        with Image.open(path) as im:
+            im.draft("L", (COLLAGE_SIDE * 2, COLLAGE_SIDE * 2))
+            g = im.convert("L")
+        s = float(COLLAGE_SIDE) / max(g.size)
+        if s < 1:
+            g = g.resize((max(1, round(g.width * s)), max(1, round(g.height * s))), Image.BOX)
+        a = np.asarray(g, dtype=np.float32)
+        nh, sh = _collage_seams(a)
+        nv, sv = _collage_seams(np.ascontiguousarray(a.T))
+        if nh > COLLAGE_MAX_SEAMS or nv > COLLAGE_MAX_SEAMS:
+            return False      # çok sayıda düz çizgi: tuğla, fayans, ızgara gibi bir desen
+        return bool(sh or sv)
+    except Exception:
+        return False
+
+
+def find_collage_items(paths, slug, progress_cb=None, abort_event=None):
+    """
+    Veri setindeki kolaj gibi görünen öğeler (kullanıcının 'kalsın' dediği öğeler hariç).
+    Sonuç her öğeye işlenir ('collage'), böylece aynı görsel bir daha taranmaz.
+    """
+    data = load_dataset(paths, slug)
+    if not data:
+        return []
+    items = data["items"]
+    todo = [it for it in items if "collage" not in it]
+    for i, it in enumerate(todo):
+        if abort_event is not None and abort_event.is_set():
+            raise AbortedError("user")
+        it["collage"] = looks_like_collage(dataset_item_path(paths, slug, it))
+        if progress_cb and (i % 10 == 0 or i + 1 == len(todo)):
+            progress_cb(i + 1, len(todo))
+    if todo:
+        save_dataset(paths, slug, data)
+    return [it for it in items if it.get("collage") and not it.get("collage_ok")]
+
+
+def keep_dataset_items(paths, slug, files):
+    """Kullanıcı 'kalsın' dedi: bu öğeler bir daha sorulmaz."""
+    data = load_dataset(paths, slug)
+    if not data:
+        return 0
+    files, n = set(files), 0
+    for it in data["items"]:
+        if it.get("file") in files:
+            it["collage_ok"] = True
+            n += 1
+    save_dataset(paths, slug, data)
+    return n
+
+
+def exclude_dataset_items(paths, slug, files):
+    """
+    Öğeleri veri setinden çıkarır. Programın kopyaladığı dosyalar silinmez, veri setinin 'excluded'
+    klasörüne taşınır; bağlantılı (kullanıcının kendi klasöründeki) dosyalara hiç dokunulmaz.
+    """
+    data = load_dataset(paths, slug)
+    if not data:
+        return 0
+    files = set(files)
+    keep, moved = [], 0
+    ex_dir = os.path.join(_ds_dir(paths, slug), EXCLUDED_DIR)
+    for it in data["items"]:
+        if it.get("file") not in files:
+            keep.append(it)
+            continue
+        moved += 1
+        if it.get("linked") or os.path.isabs(it.get("file") or ""):
+            continue
+        src = dataset_item_path(paths, slug, it)
+        if not os.path.exists(src):
+            continue
+        os.makedirs(ex_dir, exist_ok=True)
+        base, ext = os.path.splitext(os.path.basename(src))
+        dst, k = os.path.join(ex_dir, base + ext), 2
+        while os.path.exists(dst):
+            dst, k = os.path.join(ex_dir, "%s_%d%s" % (base, k, ext)), k + 1
+        try:
+            shutil.move(src, dst)
+        except OSError:
+            pass
+    data["items"] = keep
+    save_dataset(paths, slug, data)
+    return moved
 
 
 def scan_image_files(folder, recursive=True, limit=200000):

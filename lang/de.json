@@ -550,5 +550,12 @@
   "v2_tag_hint_face": "Name der Person oder Figur, z. B. „mein Gesicht“ — er wird zum Auslöserwort.",
   "v2_deep_note_face": "Aus jedem Bild wird nur das Gesicht (mit Haaren) ausgeschnitten und gelernt; Hintergrund und Kleidung kaum. Bilder ohne erkanntes Gesicht werden übersprungen.",
   "v2_face_consent_q": "Der Gesichtsmodus lernt, wie eine Person aussieht.\n\nSind das Ihre Gesichter, Personen, die zugestimmt haben, oder fiktive Figuren? Verwenden Sie ihn nicht, um echte Personen ohne deren Einwilligung nachzuahmen.\n\nJa: weiter (für diesen Datensatz nicht erneut gefragt)",
-  "tr_log_face_mode": "👤 In {n} Bild(ern) wurde das Gesicht gefunden und ausgeschnitten; {skipped} Bild(er) ohne Gesicht übersprungen."
+  "tr_log_face_mode": "👤 In {n} Bild(ern) wurde das Gesicht gefunden und ausgeschnitten; {skipped} Bild(er) ohne Gesicht übersprungen.",
+  "v2_status_collage": "Bilder werden auf Collagen geprüft…",
+  "v2_prog_collage": "Layout-Prüfung {a}/{b}",
+  "v2_collage_q": "{n} Bild(er) sehen aus wie eine Collage oder ein geteilter Bildschirm (mehrere Bilder in einem):\n{names}\n\nDas Modell würde dieses Layout mitlernen und geteilte Bilder zeichnen.\n\nAus dem Training entfernen?\nJa: entfernen (die Dateien werden nicht gelöscht, sondern in den Ordner 'excluded' des Datensatzes verschoben)\nNein: behalten (für diese Bilder wird nicht erneut gefragt)",
+  "v2_collage_cancel": "Abbrechen: Training jetzt nicht starten",
+  "v2_log_collage_out": "{n} collageartige(s) Bild(er) aus dem Datensatz entfernt (verschoben nach: {folder})",
+  "v2_log_collage_kept": "{n} collageartige(s) Bild(er) auf Wunsch behalten.",
+  "v2_log_collage_cancel": "Das Training wurde nicht gestartet."
 }

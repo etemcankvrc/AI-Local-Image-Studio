@@ -550,5 +550,12 @@
   "v2_tag_hint_face": "Name of the person or character, e.g. 'my face' — it becomes the trigger word.",
   "v2_deep_note_face": "Only the face (with hair) is cut out of each image and learned; background and clothes are barely learned. Images without a detected face are skipped.",
   "v2_face_consent_q": "Face mode learns what a person looks like.\n\nAre these faces yours, people who agreed to it, or fictional characters? Do not use it to imitate real people without their consent.\n\nYes: continue (not asked again for this dataset)",
-  "tr_log_face_mode": "👤 Face found and cut out in {n} image(s); {skipped} image(s) without a face were skipped."
+  "tr_log_face_mode": "👤 Face found and cut out in {n} image(s); {skipped} image(s) without a face were skipped.",
+  "v2_status_collage": "Checking images for collages…",
+  "v2_prog_collage": "Checking layout {a}/{b}",
+  "v2_collage_q": "{n} image(s) look like a collage or split screen (several pictures in one image):\n{names}\n\nThe model would learn this layout too and start drawing split images.\n\nRemove them from training?\nYes: remove (the files are moved to the dataset's 'excluded' folder, not deleted)\nNo: keep them (you won't be asked about these again)",
+  "v2_collage_cancel": "Cancel: don't start training now",
+  "v2_log_collage_out": "{n} collage-like image(s) removed from the dataset (moved to: {folder})",
+  "v2_log_collage_kept": "{n} collage-like image(s) kept, as you chose.",
+  "v2_log_collage_cancel": "Training was not started."
 }

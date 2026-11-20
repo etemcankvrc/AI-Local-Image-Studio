@@ -550,5 +550,12 @@
   "v2_tag_hint_face": "Kişinin ya da karakterin adı, ör. 'benim yüzüm' — tetikleyici kelime olur.",
   "v2_deep_note_face": "Her görselden yalnızca yüz (saçla birlikte) kesilip öğretilir; arka plan ve kıyafet neredeyse hiç öğretilmez. Yüz bulunamayan görseller atlanır.",
   "v2_face_consent_q": "Yüz modu bir kişinin nasıl göründüğünü öğrenir.\n\nBu yüzler sizin, buna izin veren kişilerin ya da hayali karakterlerin mi? Gerçek kişileri izinleri olmadan taklit etmek için kullanmayın.\n\nEvet: devam (bu veri seti için bir daha sorulmaz)",
-  "tr_log_face_mode": "👤 {n} görselde yüz bulunup kesildi; yüz bulunamayan {skipped} görsel atlandı."
+  "tr_log_face_mode": "👤 {n} görselde yüz bulunup kesildi; yüz bulunamayan {skipped} görsel atlandı.",
+  "v2_status_collage": "Görseller kolaj için kontrol ediliyor…",
+  "v2_prog_collage": "Düzen kontrolü {a}/{b}",
+  "v2_collage_q": "{n} görsel kolaj ya da bölünmüş ekran gibi görünüyor (tek görselde birden fazla kare):\n{names}\n\nModel bu düzeni de öğrenir ve görselleri bölmeli çizmeye başlar.\n\nBunlar eğitimden çıkarılsın mı?\nEvet: çıkar (dosyalar silinmez, veri setinin 'excluded' klasörüne taşınır)\nHayır: kalsın (bunlar için bir daha sorulmaz)",
+  "v2_collage_cancel": "İptal: eğitimi şimdi başlatma",
+  "v2_log_collage_out": "Kolaj gibi görünen {n} görsel veri setinden çıkarıldı (taşındığı yer: {folder})",
+  "v2_log_collage_kept": "Kolaj gibi görünen {n} görsel, seçiminle veri setinde bırakıldı.",
+  "v2_log_collage_cancel": "Eğitim başlatılmadı."
 }
