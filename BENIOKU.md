@@ -1,8 +1,14 @@
-# 🎨 AI Local Image Studio v1.4.3
+# 🎨 AI Local Image Studio v1.4.4
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.4'te yeni — "İşlem bittiğinde bilgisayarı kapat" eğitimde de çalışır
+
+- Önceden yalnızca görsel üretiminden sonra kapatıyordu. Artık eğitim (hafif / derin / kendi kendine öğrenme) ve görsel okuma bitince de kapatır.
+- Süreli eğitimde (ör. 500 dk) süre dolunca LoRA kaydedilir, sonra 60 saniyelik kapatma sayacı başlar; açılan pencereden ya da kutunun işaretini kaldırarak iptal edilebilir.
+- **Durdur**'a basarsan ya da eğitim hatayla biterse bilgisayar kapatılmaz.
 
 ## v1.4.3'te yeni — kolajda her görsel ve her kare için sen karar verirsin
 

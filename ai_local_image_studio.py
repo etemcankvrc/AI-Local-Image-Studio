@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 
 
 def _app_dir():
@@ -4315,7 +4315,9 @@ class ImageStudio:
         nxt, self.after_job = self.after_job, None
         if nxt is not None and ok:
             self.r.after(200, nxt)
-        if kind == "generate" and ok and self.v_shutdown.get():
+        # görsel üretimi ve eğitim / görsel okuma (analiz) başarıyla bitince; kullanıcı durdurduysa ya da hata
+        # olduysa kapatılmaz. Sırada bekleyen bir iş varsa (ör. içe aktarmadan sonra okuma) o bitince kapatılır.
+        if kind in ("generate", "analysis") and ok and self.v_shutdown.get() and nxt is None:
             self._trigger_shutdown()
 
     def _engine_broken_prompt(self):
