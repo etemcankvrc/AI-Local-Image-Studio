@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.4.0"
 
 
 def _app_dir():
