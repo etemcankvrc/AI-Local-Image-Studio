@@ -7,10 +7,43 @@
 ## v1.3.1'de yeni — kolaj / bölünmüş ekran kontrolü
 
 - Tek görselde birden fazla kare olan görseller (kolajlar, yan yana ya da üst üste bölünmüş ekranlar, bölünmüş ekranlı videolardan çıkan kareler) eğitimi bozar: model bu düzeni de öğrenir ve görselleri bölmeli çizer.
-- Program artık bu görselleri bulur ve sorar: **Evet** → eğitimden çıkarılır, **Hayır** → kalır (bunlar için bir daha sorulmaz).
+- Program artık bu görselleri bulur ve küçük önizlemeleriyle gösterir (kırmızı çerçeveler = kesilecek kareler). Seçenekler:
+  - **✂ Kes, ayrı görseller yap:** her kare ayrı bir görsel olarak veri setine eklenir (veri setinin adıyla), yani bir resimden birden fazla eğitim verisi çıkar. Ayırıcı beyaz/siyah şeritler kırpılır; iç içe düzenler (ör. solda büyük, sağda iki küçük) de ayrılır. "Şundan küçük görselleri atla" boyutundan küçük kareler alınmaz. Yeni kareler otomatik açıklanır.
+  - **Çıkar:** eğitimden çıkarılır. **Kalsın:** kalır (bunlar için bir daha sorulmaz).
   - Kontrol, içe aktarma (klasör, dosya, video, internet) bittiğinde ve eğitim başlarken yapılır. Eğitim başlarken **İptal** de seçilebilir.
   - Çıkarılan dosyalar silinmez, veri setinin `excluded` klasörüne taşınır. Kendi klasörünüzden bağlantı olarak eklenen dosyalara hiç dokunulmaz, yalnızca veri setinden çıkarılır.
   - Algılama ek model indirmez; görüntünün ortasındaki düz, tam boy sınırlara ve tek renkli ayırıcı şeritlere bakar. Tuğla, fayans gibi desenler kolaj sayılmaz. Nadiren yanılabilir; bu yüzden dosya adları gösterilir ve karar size bırakılır.
+
+## v1.3.1'de yeni — eğitim modelini sen seçersin
+
+- Derin modda **Model** seçimi eklendi. LoRA bir modelin iç yapısına göre öğrenildiği için yalnızca o model ailesinde çalışır; artık hangisi için eğitileceğini sen seçiyorsun:
+
+| Model | Gereken | Not |
+|---|---|---|
+| SD 1.5 | 4 GB VRAM ya da CPU | Kendi eklediğin SD 1.5 modelleriyle de çalışır |
+| SDXL | ≥ 10 GB VRAM | 1024 px'te eğitir |
+| FLUX.2 [klein] 4B | ≥ 12 GB VRAM | *klein base 4B* üzerinde eğitilir (bir kez ~7.8 GB, Apache-2.0), hızlı FLUX.2 ile kullanılır |
+| Z-Image | ≥ 16 GB VRAM | *Z-Image base* üzerinde eğitilir (bir kez ~12.3 GB, Apache-2.0), Z-Image-Turbo ile kullanılır |
+
+  - **RAM destekli eğitim (🐢):** ekran kartı tam hız için yetmiyorsa (ör. 4 GB kartta FLUX.2) model RAM'de tutulur ve ekran kartına parça parça taşınır (blok takası). Metin modeli de aynı yöntemle okunur. Çalışır ama birkaç kat yavaştır. En az 3.5 GB VRAM'li NVIDIA kart ve yeterli RAM gerekir: SDXL 16 GB, FLUX.2 24 GB, Z-Image 28 GB.
+  - Bunları da karşılamayan seçenek ⛔ ile gösterilir ve başlatılmaz (çökme yok). Eğitim sırasında bellek yetmezse daha düşük çözünürlükle yeniden denenir.
+  - Base modelden yalnızca dönüştürücü indirilir; VAE ve metin kodlayıcı kurulu modelden alınır. Metin kodlayıcı metinler okunduktan sonra bellekten silinir, böylece FLUX.2 eğitimi 12 GB'a sığar.
+  - Her modelin LoRA'sı ayrı dosyaya kaydedilir (`ad_sdxl`, `ad_flux2`, `ad_zimage`); aynı veri setiyle farklı modellerde eğitim birbirini ezmez.
+- **LoRA uyumluluğu artık ağırlıklara bakılarak belirleniyor.** Önceden FLUX.1, Wan (video), Qwen-Image gibi başka modellerin LoRA'ları FLUX.2 / Z-Image için "uygun" görünebiliyordu. Şimdi FLUX.2 4B, FLUX.2 9B/dev, FLUX.1, Z-Image, Wan ve Qwen-Image LoRA'ları ayrılıyor; uymayanlar "Bu modele uyanlar" filtresinde gizleniyor.
+- **LoRA çökmesi düzeltildi:** modelde karşılığı olmayan bir LoRA artık işi durdurmuyor; atlanıp log'a yazılıyor.
+- **RAM:** Windows için ayrılan %20 sabit pay kaldırıldı (bkz. üstte).
+
+## v1.3.1'de yeni — kendi modelin
+
+- Civitai, Hugging Face ya da başka bir yerden indirdiğin **tek dosyalık SD 1.5 / SDXL modellerini** (`.safetensors`) `addons\models\` klasörüne koy. Model listesinde **📦 ad [SD 1.5]** gibi görünür.
+  - Kalite ayarları, örnekleyiciler, LoRA'lar, yüz ve el düzeltici, ikinci geçiş ve büyütme bu modellerle de çalışır.
+  - Program bu modelleri **indirmez**. Sitelere bağlantı ya da arama yoktur, yalnızca senin koyduğun dosyalar okunur.
+  - `.ckpt` / `.pt` dosyaları içlerinde kod taşıyabildiği için **hiç açılmaz**. Log'da "kullanılmadı" yazar; aynı modelin `.safetensors` sürümünü indir.
+  - Desteklenmeyenler (log'da nedeniyle yazar): SD 2.x, SDXL refiner, inpainting modelleri, tek dosyalık FLUX / SD3 modelleri, VAE'si olmayan eksik dosyalar.
+  - İlk kullanımda bir kez lisans uyarısı çıkar: bu modellerin bir kısmı ticari kullanıma kapalıdır, lisansı kontrol etmek kullanıcının sorumluluğundadır.
+  - Modeli açmak için aynı mimarideki programın modeli kuruluysa onun ayar dosyaları kullanılır. Kurulu değilse yalnızca ayar dosyalarından oluşan **~4 MB'lık bir paket** (ağırlık yok) onayınla indirilir: `models\configs\`.
+  - Tam modeli yanlışlıkla `addons\` köküne koyarsan program onu LoRA sanmaz, yine model olarak gösterir ve log'da doğru yerini söyler.
+- İngilizce arayüzde kolaj sorusunun metni görünmüyordu (yalnızca anahtar adı çıkıyordu); düzeltildi.
 
 ## v1.3.0'da yeni — yüz modu
 
@@ -152,6 +185,8 @@ D:\AI Local Image Studio\
   models\           ← görsel modelleri, Real-ESRGAN ve yüz/el algılayıcı (models\detect)
   datasets\         ← veri setleri (görseller, video kareleri, açıklamalar, tür — dataset.json)
   addons\           ← kullanıcının koyduğu LoRA eklentileri (program indirmez)
+  addons\models\    ← kullanıcının koyduğu tam modeller (tek dosya SD 1.5 / SDXL .safetensors)
+  models\configs\   ← kullanıcı modelleri için ayar paketleri (gerekirse, ~4 MB, ağırlık yok)
   loras\            ← programın ürettiği LoRA'lar, kelime kartları ve örnek görseller
   feedback\         ← 👍 / 👎 puanları (ratings.jsonl)
   outputs\          ← üretilen görseller
@@ -263,10 +298,12 @@ D:\AI Local Image Studio\
 19. **v1.3.0 — yüz modu:** Kendi yüzünüzün 15–30 fotoğrafı → tür "👤 Yüz", mod "Derin" → BAŞLAT.
     - İzin sorusu bir kez çıkmalı.
     - Log'da "👤 N görselde yüz bulunup kesildi" yazmalı. LoRA penceresinde "👤 Program · Yüz" görünmeli.
-
 20. **v1.3.1 — kolaj:** İki-üç kolaj ya da bölünmüş ekran görüntüsünü normal fotoğraflarla birlikte içe aktarın.
     - İçe aktarma bitince kolajlar için soru çıkmalı. Evet → dosyalar `excluded` klasörüne taşınmalı.
     - Eğitimi başlatırken yeni kolaj varsa Evet/Hayır/İptal sorusu çıkmalı. Hayır dediklerinizi bir daha sormamalı.
+21. **v1.3.1 — kendi modelin:** Bir SD 1.5 modelini (`.safetensors`) `addons\models\` içine koyup programı açın.
+    - 4. bölümdeki model listesinde "📦 ad [SD 1.5]" görünmeli. LoRA penceresinde görünmemeli.
+    - İlk üretimde lisans uyarısı bir kez çıkmalı; görsel üretilmeli ve dosya adında modelin adı olmalı.
 
 Sorun çıkarsa veri klasöründeki `logs\ails.log` (ilk kurulumda `logs\setup.log`) dosyasını gönderin.
 

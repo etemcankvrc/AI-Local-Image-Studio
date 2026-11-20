@@ -178,6 +178,10 @@ class DataPaths:
     def ensure_dirs(self):
         for d in (self.runtime, self.models, self.outputs, self.cache, self.hf_home, self.tmp, self.logs):
             os.makedirs(d, exist_ok=True)
+        try:
+            os.makedirs(os.path.join(self.root, "addons", "models"), exist_ok=True)   # kullanıcının kendi modelleri
+        except OSError:
+            pass
 
     def env(self):
         """Program ve alt süreçleri (pip vb.) için ortam: önbellek ve geçici dosyalar da seçilen diske."""
@@ -442,9 +446,34 @@ def pagefile_gb():
         return -1.0
 
 
+def pagefile_free_gb():
+    """Sayfa dosyasında (Windows) / takas alanında boş yer. Bilinmiyorsa -1."""
+    try:
+        import psutil
+        sw = psutil.swap_memory()
+        return sw.free / GB if sw.total > 0 else 0.0
+    except Exception:
+        return -1.0
+
+
 def ram_reserve_gb(total_gb):
-    """Windows ve diğer programlar için her zaman boş bırakılan RAM (toplamın %20'si, en az 3 GB)."""
-    return max(3.0, total_gb * 0.20)
+    """
+    Eski sürümlerde Windows için toplam RAM'in %20'si sabit pay olarak ayrılıyordu; bu, RAM boşken bile büyük
+    modelleri engelliyordu. Windows bekleyen/önbellek belleği kendisi boşaltır ve gerekirse sayfa dosyasını
+    kullanır. Artık yalnızca küçük bir güvenlik payı kalır.
+    """
+    return 1.0
+
+
+def ram_can_load(need_gb, total_gb=None):
+    """
+    (yüklenebilir_mi, kullanılabilir_GB, sıkışık_mı). Sınır: boş RAM + sayfa dosyasındaki boş yer (Windows'un
+    gerçekten verebileceği bellek). Boş RAM'den fazlası gerekiyorsa yine yüklenir; Windows yer açar ('sıkışık').
+    """
+    avail = ram_available_gb()
+    pf = pagefile_free_gb()
+    usable = avail + max(0.0, pf) - ram_reserve_gb(total_gb or 0)
+    return need_gb <= usable, max(0.0, usable), need_gb > avail
 
 
 def detect_hardware():
@@ -504,7 +533,7 @@ def model_ram_need_gb(model, profile, disk_gb=None):
 
 def fit_level(model, hw):
     """'ok' | 'slow' | 'no' — model listesinde gösterilen uygunluk etiketi."""
-    if model_ram_need_gb(model, "normal") > hw.ram_total_gb - ram_reserve_gb(hw.ram_total_gb):
+    if model_ram_need_gb(model, "normal") > hw.ram_total_gb + max(0.0, hw.pagefile_gb) - ram_reserve_gb(hw.ram_total_gb):
         return "no"
     prof = auto_profile(model, hw)
     if prof in ("full", "normal"):
@@ -517,9 +546,10 @@ def fit_level(model, hw):
 class RamWatchdog:
     """İş sürerken RAM'i izler; kritik seviyeye inerse işi güvenle durdurur (sistem donmasın diye)."""
 
-    def __init__(self, abort_event, total_gb, on_trigger=None, interval=1.0):
+    def __init__(self, abort_event, total_gb, on_trigger=None, interval=1.0, confirm=3):
         self.abort_event = abort_event
         self.limit_gb = max(1.0, min(2.0, total_gb * 0.05))
+        self.confirm = max(1, int(confirm))      # art arda bu kadar ölçümde düşük kalırsa (anlık düşüşler sayılmaz)
         self.on_trigger = on_trigger
         self.interval = interval
         self.triggered = False
@@ -535,10 +565,25 @@ class RamWatchdog:
     def __exit__(self, *a):
         self._stop.set()
 
+    def _critical(self):
+        """
+        Gerçekten tehlikeli mi? Boş RAM azaldığında Windows bekleyen belleği boşaltır ve sayfa dosyasına yazar;
+        bu normaldir. Tehlike, sayfa dosyasında da yer kalmadığında (ya da sayfa dosyası yokken) başlar.
+        """
+        free = ram_available_gb()
+        if free >= self.limit_gb:
+            return False, free
+        pf = pagefile_free_gb()
+        if pf > 2.0:
+            return False, free
+        return True, free
+
     def _run(self):
+        low = 0
         while not self._stop.wait(self.interval):
-            free = ram_available_gb()
-            if free < self.limit_gb:
+            crit, free = self._critical()
+            low = low + 1 if crit else 0
+            if low >= self.confirm:
                 self.triggered = True
                 self.free_at_trigger = free
                 self.abort_event.set()
@@ -571,6 +616,7 @@ def free_gpu_memory():
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
+            release_pinned_cache()
     except Exception:
         pass
 
@@ -655,6 +701,11 @@ IMAGE_MODELS = [
 ]
 IMAGE_MODEL_BY_KEY = {m["key"]: m for m in IMAGE_MODELS}
 
+
+def model_family(model):
+    """Modelin mimarisi: programın modellerinde anahtarın kendisi, kullanıcının eklediği modelde 'sd15' / 'sdxl'."""
+    return model.get("family") or model["key"]
+
 # Ollama LLM'leri — hepsi Apache-2.0 (Qwen2.5'in 3B/72B sürümleri farklı lisanslı olduğu için listede yok).
 LLM_MODELS = [
     {"key": "qwen3:4b", "name": "Qwen3 4B", "size": "~2.5 GB", "size_gb": 2.5, "license": "Apache-2.0", "vram": 3.5, "desc": "desc_qwen3_4b"},
@@ -709,9 +760,9 @@ def hires_enabled(mode, model, quality, profile):
         return True
     if profile == "cpu":
         return False
-    if model["key"] == "sd15":
+    if model_family(model) == "sd15":
         return quality in ("balanced", "detailed", "ultra")
-    if model["key"] == "sdxl":
+    if model_family(model) == "sdxl":
         return quality == "ultra" and profile in ("full", "normal")
     return False
 
@@ -745,6 +796,8 @@ MARKER = ".ails_complete.json"
 
 
 def image_model_dir(models_root, model):
+    if model.get("custom"):
+        return model["file"]          # kullanıcının modeli tek dosyadır
     return os.path.join(models_root, "image", model["key"])
 
 
@@ -753,6 +806,8 @@ def upscaler_path(models_root):
 
 
 def is_image_model_installed(models_root, model):
+    if model.get("custom"):
+        return os.path.isfile(model["file"])
     return os.path.exists(os.path.join(image_model_dir(models_root, model), MARKER))
 
 
@@ -2358,6 +2413,7 @@ class ImageEngine:
         self.pipe = None
         self.key = None
         self.profile = None
+        self.ram_tight = False
         self.device = "cpu"
         self.parked = False
         self.sampler = "default"
@@ -2401,9 +2457,10 @@ class ImageEngine:
 
             disk_gb = folder_size_bytes(path) / GB
             need = model_ram_need_gb(model, profile, disk_gb)
-            avail = ram_available_gb() - ram_reserve_gb(hw.ram_total_gb) * 0.5
-            if need > avail + 0.5:
-                raise MemoryGuardError((need, max(0.0, avail)))
+            ok, usable, tight = ram_can_load(need, hw.ram_total_gb)
+            if not ok:
+                raise MemoryGuardError((need, usable))
+            self.ram_tight = tight
 
             torch = import_torch()
             try:
@@ -2414,10 +2471,11 @@ class ImageEngine:
             except BaseException as e:  # noqa
                 raise EngineBrokenError(f"diffusers: {type(e).__name__}: {str(e)[:200]}") from e
 
-            with open(os.path.join(path, "model_index.json"), encoding="utf-8") as f:
-                cls_name = json.load(f).get("_class_name", "")
-            if cls_name and not hasattr(diffusers, cls_name):
-                raise EngineBrokenError(f"diffusers {getattr(diffusers, '__version__', '?')} lacks {cls_name}")
+            if not model.get("custom"):
+                with open(os.path.join(path, "model_index.json"), encoding="utf-8") as f:
+                    cls_name = json.load(f).get("_class_name", "")
+                if cls_name and not hasattr(diffusers, cls_name):
+                    raise EngineBrokenError(f"diffusers {getattr(diffusers, '__version__', '?')} lacks {cls_name}")
 
             on_gpu = profile != "cpu" and hw.cuda_usable
             if model["dtype"] == "fp16":
@@ -2427,14 +2485,17 @@ class ImageEngine:
             kwargs = dict(torch_dtype=dtype)
             kwargs.update(model.get("load_kwargs", {}))
             variant = model.get("variant")
-            try:
-                pipe = DiffusionPipeline.from_pretrained(path, variant=variant, **kwargs) if variant \
-                    else DiffusionPipeline.from_pretrained(path, **kwargs)
-            except (ValueError, OSError) as e:
-                if variant and "variant" in str(e).lower():
-                    pipe = DiffusionPipeline.from_pretrained(path, **kwargs)
-                else:
-                    raise
+            if model.get("custom"):
+                pipe = load_custom_pipeline(model, kwargs)
+            else:
+                try:
+                    pipe = DiffusionPipeline.from_pretrained(path, variant=variant, **kwargs) if variant \
+                        else DiffusionPipeline.from_pretrained(path, **kwargs)
+                except (ValueError, OSError) as e:
+                    if variant and "variant" in str(e).lower():
+                        pipe = DiffusionPipeline.from_pretrained(path, **kwargs)
+                    else:
+                        raise
 
             dev = hw.device if on_gpu else "cpu"
             if profile == "full" and on_gpu:
@@ -2470,6 +2531,21 @@ class ImageEngine:
             return True
 
     # ------------------------------------------------------------------ LoRA
+    def _present_adapters(self):
+        """Pipeline'da gerçekten yüklü olan LoRA adaptörlerinin adları."""
+        try:
+            got = self.pipe.get_list_adapters() or {}
+            return {n for names in got.values() for n in (names or [])}
+        except Exception:
+            return set(self._loras)
+
+    def _unload_all_loras(self):
+        try:
+            self.pipe.unload_lora_weights()
+        except Exception:
+            pass
+        self._loras = {}
+
     def set_loras(self, specs):
         """
         specs: [(kimlik, dosya yolu, güç)] — yalnızca bu modelle uyumlu olanlar.
@@ -2489,6 +2565,9 @@ class ImageEngine:
                     self.pipe.unload_lora_weights()
                     self._loras = {}
                 return [], []
+            present = self._present_adapters()
+            for n in [n for n in self._loras if n not in present]:
+                self._loras.pop(n, None)          # kayıtta var ama modelde yok: izi temizle
             stale = [n for n in self._loras if n not in want]
             if stale:
                 try:
@@ -2496,23 +2575,33 @@ class ImageEngine:
                     for n in stale:
                         self._loras.pop(n, None)
                 except Exception:
-                    self.pipe.unload_lora_weights()
-                    self._loras = {}
+                    self._unload_all_loras()
             errors = []
             for n, (path, _w, key) in want.items():
                 if n in self._loras:
                     continue
                 try:
                     self.pipe.load_lora_weights(os.path.dirname(path), weight_name=os.path.basename(path), adapter_name=n)
-                    self._loras[n] = path
                 except Exception as e:
                     errors.append((key, f"{type(e).__name__}: {str(e)[:180]}"))
+                    continue
+                # diffusers, modelde karşılığı olmayan bir LoRA'yı hata vermeden "yükler" ama adaptör oluşturmaz
+                # (başka bir modele ait LoRA, desteklenmeyen biçim…). Bu durumda LoRA atlanır, iş çökmez.
+                if n in self._present_adapters():
+                    self._loras[n] = path
+                else:
+                    errors.append((key, "no matching layers in this model (LoRA made for another model or an "
+                                        "unsupported LoRA type)"))
             names = [n for n in want if n in self._loras]
             if names:
-                self.pipe.set_adapters(names, adapter_weights=[want[n][1] for n in names])
+                try:
+                    self.pipe.set_adapters(names, adapter_weights=[want[n][1] for n in names])
+                except Exception as e:
+                    self._unload_all_loras()
+                    errors += [(want[n][2], f"{type(e).__name__}: {str(e)[:180]}") for n in names]
+                    names = []
             elif self._loras:
-                self.pipe.unload_lora_weights()
-                self._loras = {}
+                self._unload_all_loras()
             return [(want[n][2], want[n][1]) for n in names], errors
 
     # ------------------------------------------------------------------ örnekleyici (sampler)
@@ -2533,7 +2622,7 @@ class ImageEngine:
                 elif name == "dpmpp_2m_karras":
                     sch = diffusers.DPMSolverMultistepScheduler.from_config(
                         cfg, use_karras_sigmas=True, algorithm_type="dpmsolver++", solver_order=2,
-                        euler_at_final=(model["key"] == "sdxl"))
+                        euler_at_final=(model_family(model) == "sdxl"))
                 elif name == "euler_a":
                     sch = diffusers.EulerAncestralDiscreteScheduler.from_config(cfg)
                 elif name == "euler":
@@ -3395,11 +3484,21 @@ def _collage_seams(a, lo=0.15, hi=0.85):
 def looks_like_collage(path):
     """Görsel kolaj / bölünmüş ekran gibi mi? Okunamazsa False (karar kullanıcıya bırakılır)."""
     try:
-        import numpy as np
         from PIL import Image
         with Image.open(path) as im:
             im.draft("L", (COLLAGE_SIDE * 2, COLLAGE_SIDE * 2))
             g = im.convert("L")
+        return _collage_img(g)
+    except Exception:
+        return False
+
+
+def _collage_img(g):
+    """looks_like_collage'ın görsel (PIL) üzerinde çalışan hâli."""
+    try:
+        import numpy as np
+        from PIL import Image
+        g = g.convert("L")
         s = float(COLLAGE_SIDE) / max(g.size)
         if s < 1:
             g = g.resize((max(1, round(g.width * s)), max(1, round(g.height * s))), Image.BOX)
@@ -3481,6 +3580,162 @@ def exclude_dataset_items(paths, slug, files):
     data["items"] = keep
     save_dataset(paths, slug, data)
     return moved
+
+
+def _trim_flat_edges(g, max_frac=0.03, flat=3.0):
+    """Kesitin kenarlarındaki tek renkli ayırıcı şeritleri kırpar. g: gri numpy dizisi. Dönüş: (sol, üst, sağ, alt)."""
+    h, w = g.shape
+    top, bottom, left, right = 0, h, 0, w
+    my, mx = max(1, int(h * max_frac)), max(1, int(w * max_frac))
+    rs, cs = g.std(axis=1), g.std(axis=0)
+    while top < my and rs[top] < flat:
+        top += 1
+    while h - bottom < my and bottom - 1 > top and rs[bottom - 1] < flat:
+        bottom -= 1
+    while left < mx and cs[left] < flat:
+        left += 1
+    while w - right < mx and right - 1 > left and cs[right - 1] < flat:
+        right -= 1
+    return left, top, right, bottom
+
+
+def collage_panels(img, min_px=128, max_depth=3):
+    """
+    Kolajı karelerine ayırır: [(sol, üst, sağ, alt), ...] — görselin kendi pikselleriyle, okuma sırasına göre.
+    Düz dikişlerden ve tek renkli ayırıcı şeritlerden keser; iç içe düzenler (ör. solda büyük, sağda iki küçük)
+    parça parça yeniden aranır. Ayırıcı şeritler kırpılır; çok küçük ve düz renk parçalar atılır.
+    Ayrılamıyorsa boş liste.
+    """
+    import numpy as np
+    from PIL import Image
+    g_full = np.asarray(img.convert("L"), dtype=np.float32)
+    H, W = g_full.shape
+    s = min(1.0, float(COLLAGE_SIDE) / max(H, W))
+    small = img.convert("L")
+    if s < 1:
+        small = small.resize((max(1, round(W * s)), max(1, round(H * s))), Image.BOX)
+    a = np.asarray(small, dtype=np.float32)
+    sh_, sw_ = a.shape
+
+    def split(x0, y0, x1, y1, depth):
+        sub = a[y0:y1, x0:x1]
+        if depth >= max_depth or sub.shape[0] < 48 or sub.shape[1] < 48:
+            return [(x0, y0, x1, y1)]
+        nh, hs = _collage_seams(sub)
+        nv, vs = _collage_seams(np.ascontiguousarray(sub.T))
+        if nh > COLLAGE_MAX_SEAMS or nv > COLLAGE_MAX_SEAMS or not (hs or vs):
+            return [(x0, y0, x1, y1)]
+        out = []
+        def pieces(seams, length):
+            # dikiş satırı iki karenin karışımıdır: hiçbir kareye verilmez
+            starts = [0] + [q + 1 for q in seams]
+            ends = list(seams) + [length]
+            return [(a_, b_) for a_, b_ in zip(starts, ends) if b_ - a_ >= 4]
+        if vs:                                   # önce sütunlar, sonra her sütun kendi içinde
+            for a_, b_ in pieces(vs, x1 - x0):
+                out += split(x0 + a_, y0, x0 + b_, y1, depth + 1)
+        else:
+            for a_, b_ in pieces(hs, y1 - y0):
+                out += split(x0, y0 + a_, x1, y0 + b_, depth + 1)
+        return out
+
+    boxes = split(0, 0, sw_, sh_, 0)
+    if len(boxes) < 2:
+        return []
+    panels = []
+    for x0, y0, x1, y1 in boxes:
+        X0, Y0 = int(round(x0 / s)), int(round(y0 / s))
+        X1, Y1 = min(W, int(round(x1 / s))), min(H, int(round(y1 / s)))
+        if X1 - X0 < 8 or Y1 - Y0 < 8:
+            continue
+        crop = g_full[Y0:Y1, X0:X1]
+        l, t, r, b = _trim_flat_edges(crop)
+        X0, Y0, X1, Y1 = X0 + l, Y0 + t, X0 + r, Y0 + b
+        if min(X1 - X0, Y1 - Y0) < min_px:
+            continue
+        if float(g_full[Y0:Y1, X0:X1].std()) < 3.0:        # düz renk (boşluk/çerçeve) parçası
+            continue
+        panels.append((X0, Y0, X1, Y1))
+    return panels
+
+
+def split_collage_items(paths, slug, files, min_side=256, progress_cb=None, abort_event=None):
+    """
+    Kolaj öğelerini karelerine böler: her kare veri setine ayrı görsel olarak eklenir (veri setinin adıyla), asıl
+    görsel 'excluded' klasörüne taşınır (silinmez; bağlantılı dosyaya dokunulmaz).
+    Dönüş: {"split": bölünen, "new": yeni görsel, "failed": [bölünemeyen dosyalar]}.
+    """
+    import io
+    from PIL import Image
+    data = load_dataset(paths, slug)
+    if not data:
+        return {"split": 0, "new": 0, "failed": list(files)}
+    want = set(files)
+    hashes = {i.get("sha1") for i in data["items"]}
+    done, failed, new = [], [], 0
+    todo = [it for it in list(data["items"]) if it.get("file") in want]
+    for n, it in enumerate(todo):
+        if abort_event is not None and abort_event.is_set():
+            raise AbortedError("user")
+        try:
+            with Image.open(dataset_item_path(paths, slug, it)) as im:
+                im.load()
+                fmt = (im.format or "PNG").upper()
+                img = im.convert("RGBA" if (fmt == "PNG" and "A" in im.getbands()) else "RGB")
+            panels = collage_panels(img, min_px=max(64, int(min_side or 0)))
+        except Exception:
+            panels = []
+        if not panels:
+            failed.append(it.get("file"))
+            continue
+        # kare hâlâ kolaj gibiyse (ör. içinde gözden kaçan bir dikiş) bir kez daha bölünür
+        final = []
+        for (x0, y0, x1, y1) in panels:
+            sub = img.crop((x0, y0, x1, y1))
+            inner = collage_panels(sub, min_px=max(64, int(min_side or 0))) if _collage_img(sub) else []
+            final += [(x0 + a, y0 + b, x0 + c, y0 + d) for a, b, c, d in inner] if inner else [(x0, y0, x1, y1)]
+        panels = final
+        added = 0
+        for (x0, y0, x1, y1) in panels:
+            crop = img.crop((x0, y0, x1, y1))
+            buf = io.BytesIO()
+            if crop.mode == "RGBA":
+                crop.save(buf, "PNG", optimize=True)
+                ofmt = "PNG"
+            else:
+                crop.save(buf, "JPEG", quality=95, subsampling=0)
+                ofmt = "JPEG"
+            meta = {"from_collage": it.get("file"), "collage": False}
+            for k in ("license", "author", "title", "url"):
+                if it.get(k):
+                    meta[k] = it[k]
+            if _add_item(paths, slug, data, hashes, buf.getvalue(), (ofmt, crop.width, crop.height),
+                         it.get("origin") or "local", it.get("src") or it.get("file"), copy=True, meta=meta) == "added":
+                added += 1
+        new += added
+        done.append(it.get("file"))
+        if progress_cb:
+            progress_cb(n + 1, len(todo))
+    save_dataset(paths, slug, data)
+    if done:
+        exclude_dataset_items(paths, slug, done)
+    return {"split": len(done), "new": new, "failed": failed}
+
+
+def collage_preview(path, max_side=220, min_side=256):
+    """Önizleme: küçük görsel + kesim çizgileri (kırmızı kutular). Kesimle aynı en küçük kare boyutu kullanılır, böylece
+    gösterilen kare sayısı gerçekte eklenecek sayıyla aynıdır. Dönüş: (PIL görsel, kare sayısı)."""
+    from PIL import Image, ImageDraw
+    with Image.open(path) as im:
+        im.load()
+        img = im.convert("RGB")
+    panels = collage_panels(img, min_px=max(64, int(min_side or 0)))
+    s = min(1.0, float(max_side) / max(img.size))
+    th = img.resize((max(1, int(img.width * s)), max(1, int(img.height * s))), Image.BILINEAR)
+    d = ImageDraw.Draw(th)
+    for x0, y0, x1, y1 in panels:
+        d.rectangle([x0 * s, y0 * s, x1 * s - 1, y1 * s - 1], outline=(255, 60, 60), width=2)
+    return th, len(panels)
 
 
 def scan_image_files(folder, recursive=True, limit=200000):
@@ -4043,7 +4298,8 @@ PEFT_PIP = ["peft==0.22.0"]
 PEFT_SIZE = "~1 MB"
 LORA_MAX_FILES = 2000
 BASE_LABELS = {"sd15": "SD 1.5", "sdxl": "SDXL", "sd2": "SD 2.x", "flux": "FLUX.1", "dit": "DiT", "any": "—",
-               "unknown": "?"}
+               "unknown": "?", "flux2_klein_4b": "FLUX.2 4B", "flux2": "FLUX.2 (9B/dev)", "zimage_turbo": "Z-Image",
+               "wan": "Wan (video)", "qwen_image": "Qwen-Image", "other": "?"}
 
 
 def own_lora_dir(paths):
@@ -4123,11 +4379,102 @@ def read_safetensors_header(path, limit=64 * MB):
     return meta, shapes
 
 
+# DiT tabanlı modellerin LoRA'ları anahtar adları ve boyutlarıyla birbirinden ayrılır. Yalnızca "DiT" demek yetmez:
+# FLUX.1, FLUX.2, Z-Image, Wan (video), Qwen-Image… LoRA'ları birbirine uymaz.
+FLUX2_KLEIN_4B = {"double": 5, "single": 20, "hidden": 3072}
+ZIMAGE_ARCH = {"layers": 30, "refiner": 2, "dim": 3840}
+_LORA_PREFIXES = ("base_model.model.", "transformer.", "diffusion_model.", "model.diffusion_model.", "unet.")
+
+
+def _lora_module_names(shapes):
+    """{modül adı: (giriş boyutu, çıkış boyutu)} — LoRA'nın dokunduğu katmanlar (önek ve lora sonekleri atılmış).
+    kohya biçimi (lora_unet_double_blocks_0_img_attn_qkv) noktalı biçime çevrilir."""
+    out = {}
+    for k, shp in shapes.items():
+        low = k.lower()
+        m = re.match(r"(.+?)\.(lora_a|lora_b|lora_down|lora_up|lora\.down|lora\.up)(\.default)?\.weight$", low)
+        if not m:
+            continue
+        name, part = m.group(1), m.group(2)
+        if name.startswith("lora_unet_") or name.startswith("lora_transformer_"):
+            name = name.split("_", 2)[2]
+            name = re.sub(r"_(\d+)_", r".\1.", name)
+            for a, b in (("double_blocks", "double_blocks"), ("single_blocks", "single_blocks")):
+                name = name.replace(a + "_", a + ".")
+            name = re.sub(r"(img|txt)_(attn|mlp|mod)_", r"\1_\2.", name)
+        for pre in _LORA_PREFIXES:
+            if name.startswith(pre):
+                name = name[len(pre):]
+                break
+        cur = list(out.get(name, (None, None)))
+        if shp and len(shp) >= 2:
+            if part in ("lora_a", "lora_down", "lora.down"):
+                cur[0] = int(shp[1])
+            else:
+                cur[1] = int(shp[0])
+        out[name] = tuple(cur)
+    return out
+
+
+def _max_index(names, block):
+    idx = [int(m.group(1)) for n in names for m in [re.match(r"(?:.*\.)?" + block + r"\.(\d+)\.", n + ".")] if m]
+    return max(idx) if idx else -1
+
+
+def detect_dit_lora(shapes):
+    """DiT LoRA'sının ait olduğu model: flux2_klein_4b | flux2 | flux | zimage_turbo | wan | qwen_image | None."""
+    mods = _lora_module_names(shapes)
+    if not mods:
+        return None
+    names = list(mods)
+    joined = " ".join(names)
+    if any(t in joined for t in ("down_blocks", "up_blocks", "mid_block", "input_blocks", "output_blocks",
+                                 "middle_block")):
+        return None              # SD 1.5 / SDXL UNet LoRA'sı
+    # Wan (video) ve Qwen-Image: kendi adlandırmaları
+    if re.search(r"(^|\s)blocks\.\d+\.(cross_attn|self_attn|ffn)\.", " " + joined):
+        return "wan"
+    if "img_mlp.net" in joined or "txt_mlp.net" in joined or ".img_mod.1" in joined:
+        return "qwen_image"
+    # Z-Image: layers.N.attention / feed_forward, noise_refiner, context_refiner
+    if re.search(r"(^|\s)(layers|noise_refiner|context_refiner)\.\d+\.(attention|feed_forward|adaln_modulation)",
+                 " " + joined):
+        dims = {d for v in mods.values() for d in v if d}
+        if _max_index(names, "layers") < ZIMAGE_ARCH["layers"] and ZIMAGE_ARCH["dim"] in dims:
+            return "zimage_turbo"
+        return "other"
+    is_flux = any(t in joined for t in ("double_blocks", "single_blocks", "transformer_blocks", "single_transformer_blocks"))
+    if not is_flux:
+        return None
+    flux2_marks = ("to_qkv_mlp_proj", "ff.linear_in", "ff_context.linear_in", "double_stream_modulation",
+                   "single_stream_modulation")
+    flux1_marks = ("proj_mlp", "ff.net.", "ff_context.net.", "norm1.linear", "norm.linear")
+    out_dims = {v[1] for v in mods.values() if v[1]}
+    in_dims = {v[0] for v in mods.values() if v[0]}
+    dbl = max(_max_index(names, "double_blocks"), _max_index(names, "transformer_blocks"))
+    sgl = max(_max_index(names, "single_blocks"), _max_index(names, "single_transformer_blocks"))
+    if any(t in joined for t in flux1_marks) or out_dims & {21504, 12288}:
+        return "flux"
+    if any(t in joined for t in flux2_marks) or out_dims & {27648, 18432}:
+        k = FLUX2_KLEIN_4B
+        if dbl < k["double"] and sgl < k["single"] and (not in_dims or k["hidden"] in in_dims):
+            return "flux2_klein_4b"
+        return "flux2"
+    # adlandırmadan ayrılamadı: blok sayısına bak (FLUX.1: 19 + 38 blok)
+    if dbl >= FLUX2_KLEIN_4B["double"] or sgl >= FLUX2_KLEIN_4B["single"]:
+        return "flux"
+    return "other"
+
+
 def detect_lora_base(meta, shapes):
-    """LoRA'nın hangi temel modele ait olduğu: sd15 | sdxl | sd2 | flux | dit | unknown."""
+    """LoRA'nın hangi temel modele ait olduğu: sd15 | sdxl | sd2 | flux | flux2_klein_4b | flux2 | zimage_turbo |
+    wan | qwen_image | other | unknown."""
     own = str(meta.get("ails_base", ""))
     if own in IMAGE_MODEL_BY_KEY:
         return own
+    dit = detect_dit_lora(shapes)
+    if dit:
+        return dit
     mv = str(meta.get("ss_base_model_version", "")).lower()
     arch = str(meta.get("modelspec.architecture", "")).lower()
     if mv.startswith("sdxl") or "stable-diffusion-xl" in arch:
@@ -4136,8 +4483,6 @@ def detect_lora_base(meta, shapes):
         return "sd15"
     if mv.startswith("sd_v2") or "stable-diffusion-v2" in arch:
         return "sd2"
-    if "flux" in mv or "flux" in arch:
-        return "flux"
     low = {k.lower(): v for k, v in shapes.items()}
     if any(k.startswith(("lora_te2_", "te2.", "text_encoder_2.")) for k in low):
         return "sdxl"
@@ -4147,24 +4492,23 @@ def detect_lora_base(meta, shapes):
             return {768: "sd15", 1024: "sd2", 2048: "sdxl"}.get(int(shp[-1]), "unknown")
     if any("input_blocks" in k for k in low):
         return "sdxl"
-    if any("double_blocks" in k or "single_blocks" in k for k in low):
+    if "flux" in mv or "flux" in arch:
         return "flux"
     if any(k.startswith(("transformer.", "diffusion_model.")) for k in low):
-        return "dit"
+        return "other"
     return "unknown"
 
 
 def lora_compat(base, model_key):
-    """'yes' | 'no' | 'maybe' — LoRA seçili görsel modeliyle çalışır mı?"""
+    """'yes' | 'no' | 'maybe' — LoRA seçili görsel modeliyle (mimarisiyle) çalışır mı?"""
     if base == "any":
         return "yes"
-    if base in ("sd15", "sdxl"):
+    if base in ("sd15", "sdxl", "flux2_klein_4b", "zimage_turbo"):
         return "yes" if base == model_key else "no"
-    if base in ("sd2", "flux"):
+    if base in ("sd2", "flux", "flux2", "wan", "qwen_image", "other", "dit"):
         return "no"
-    if base == "dit":
-        return "maybe" if model_key in ("zimage_turbo", "flux2_klein_4b") else "no"
-    return "maybe"
+    # tanınmayan biçim: SD 1.5 / SDXL'de belki (eski kohya biçimleri), DiT modellerinde hayır
+    return "maybe" if model_key in ("sd15", "sdxl") else "no"
 
 
 def _top_tags(meta, n=4):
@@ -4179,6 +4523,205 @@ def _top_tags(meta, n=4):
         return ""
 
 
+# =============================================================================
+# Kullanıcının eklediği ana modeller (checkpoint) — addons\models\ (ya da yanlışlıkla addons\ içine konanlar)
+# Program bunları İNDİRMEZ; yalnızca kullanıcının koyduğu .safetensors dosyalarını okur. .ckpt/.pt (pickle,
+# içinde kod çalıştırabilir) hiç açılmaz. Desteklenen mimariler: SD 1.5 ve SDXL.
+# =============================================================================
+CUSTOM_MODELS_SUBDIR = "models"
+CUSTOM_PREFIX = "custom:"
+CUSTOM_FAMILIES = ("sd15", "sdxl")
+UNSAFE_MODEL_EXTS = (".ckpt", ".pt", ".pth", ".bin")
+_LORA_MARKERS = ("lora_down", "lora_up", "lora_a.", "lora_b.", ".lora.", "lora_te", "lora_unet", "hada_w",
+                 "lokr_w", ".oft_", "lora_mid")
+_custom_cache = {}     # yol -> (boyut, değişiklik zamanı, sınıflandırma)
+
+
+def custom_models_dir(paths):
+    return os.path.join(addons_dir(paths), CUSTOM_MODELS_SUBDIR)
+
+
+def classify_safetensors(meta, shapes):
+    """
+    (tür, ayrıntı) — tür: 'lora' | 'sd15' | 'sdxl' | 'unsupported' | 'unknown'.
+    'unsupported' için ayrıntı: 'sd2' | 'refiner' | 'inpaint' | 'flux' | 'sd3' | 'other' | 'novae'.
+    """
+    keys = [k.lower() for k in shapes]
+    if any(m in k for k in keys for m in _LORA_MARKERS):
+        return "lora", ""
+    has_unet = any(k.startswith("model.diffusion_model.") for k in keys)
+    if not has_unet:
+        if any(("double_blocks" in k or "single_blocks" in k) for k in keys):
+            return "unsupported", "flux"
+        if any(k.startswith(("transformer.", "diffusion_model.", "model.diffusion_model.joint_blocks")) for k in keys):
+            return "unsupported", "other"
+        return "unknown", ""
+    low = {k.lower(): v for k, v in shapes.items()}
+    if any("double_blocks" in k or "single_blocks" in k for k in keys):
+        return "unsupported", "flux"
+    if any("joint_blocks" in k for k in keys):
+        return "unsupported", "sd3"
+    conv_in = low.get("model.diffusion_model.input_blocks.0.0.weight") or []
+    if len(conv_in) >= 2 and int(conv_in[1]) != 4:
+        return "unsupported", "inpaint"
+    if not any(k.startswith(("first_stage_model.", "vae.")) for k in keys):
+        return "unsupported", "novae"
+    if any(k.startswith("conditioner.embedders.1.") for k in keys):
+        return "sdxl", ""
+    if any(k.startswith("conditioner.embedders.0.") for k in keys):
+        return "unsupported", "refiner"
+    if any(k.startswith("cond_stage_model.model.") for k in keys):
+        return "unsupported", "sd2"
+    if any(k.startswith("cond_stage_model.transformer.") for k in keys):
+        for k, shp in low.items():
+            if "attn2.to_k.weight" in k and shp and len(shp) == 2:
+                return ("unsupported", "sd2") if int(shp[1]) == 1024 else ("sd15", "")
+        return "sd15", ""
+    return "unknown", ""
+
+
+def _classify_file(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return "unknown", ""
+    sig = (st.st_size, int(st.st_mtime))
+    hit = _custom_cache.get(path)
+    if hit and hit[0] == sig:
+        return hit[1]
+    try:
+        meta, shapes = read_safetensors_header(path)
+        res = classify_safetensors(meta, shapes)
+    except Exception:
+        res = ("unknown", "broken")
+    _custom_cache[path] = (sig, res)
+    return res
+
+
+def scan_custom_models(paths, limit=200):
+    """
+    addons\\models\\ (alt klasörler dahil) ve addons\\ kökündeki tam modeller.
+    Dönüş: (modeller, atlananlar) — atlananlar: [(dosya adı, neden)], neden: unsafe | sd2 | flux | … | unknown.
+    """
+    found, skipped = [], []
+    seen = set()
+    cands = []
+    md = custom_models_dir(paths)
+    if os.path.isdir(md):
+        for root, dirs, files in os.walk(md):
+            dirs[:] = sorted(x for x in dirs if not x.startswith("."))
+            cands += [os.path.join(root, f) for f in sorted(files)]
+    ad = addons_dir(paths)
+    if os.path.isdir(ad):
+        cands += [os.path.join(ad, f) for f in sorted(os.listdir(ad)) if f.lower().endswith(".safetensors")]
+    for p in cands[:limit * 4]:
+        low = p.lower()
+        in_models = os.path.normpath(os.path.dirname(p)).startswith(os.path.normpath(md))
+        if low.endswith(UNSAFE_MODEL_EXTS) and in_models:
+            skipped.append((os.path.basename(p), "unsafe"))
+            continue
+        if not low.endswith(".safetensors") or not os.path.isfile(p):
+            continue
+        kind, why = _classify_file(p)
+        if kind in CUSTOM_FAMILIES:
+            rel = os.path.relpath(p, ad).replace("\\", "/")
+            if rel in seen:
+                continue
+            seen.add(rel)
+            found.append(_custom_model_entry(paths, p, rel, kind))
+        elif in_models or kind == "unsupported":
+            skipped.append((os.path.basename(p), why or kind))
+        if len(found) >= limit:
+            break
+    return found, skipped
+
+
+def _custom_model_entry(paths, path, rel, family):
+    base = IMAGE_MODEL_BY_KEY[family]
+    m = dict(base)
+    m.update({
+        "key": CUSTOM_PREFIX + rel, "name": os.path.splitext(os.path.basename(path))[0], "family": family,
+        "custom": True, "file": path, "repo": None, "variant": None, "license": "—", "desc": "desc_custom",
+        "size_gb": round(os.path.getsize(path) / GB, 2), "models_root": paths.models,
+        "misplaced": os.path.normpath(os.path.dirname(path)) == os.path.normpath(addons_dir(paths)),
+        "load_kwargs": dict(base.get("load_kwargs", {})),
+    })
+    return m
+
+
+def refresh_custom_models(paths):
+    """Kullanıcı modellerini IMAGE_MODEL_BY_KEY'e işler (eskiler çıkarılır). Dönüş: (modeller, atlananlar)."""
+    found, skipped = scan_custom_models(paths)
+    for k in [k for k in IMAGE_MODEL_BY_KEY if k.startswith(CUSTOM_PREFIX)]:
+        del IMAGE_MODEL_BY_KEY[k]
+    for m in found:
+        IMAGE_MODEL_BY_KEY[m["key"]] = m
+    return found, skipped
+
+
+def custom_config_dir(models_root, family):
+    """
+    Tek dosyalık modeli açmak için gereken ayar dosyaları (model ağırlığı değil): aynı mimarideki programın modeli
+    kuruluysa onun klasörü, değilse küçük ayar paketi (models\\configs\\<mimari>). İkisi de yoksa None.
+    """
+    base = IMAGE_MODEL_BY_KEY[family]
+    if is_image_model_installed(models_root, base):
+        return image_model_dir(models_root, base)
+    d = os.path.join(models_root, "configs", family)
+    return d if os.path.exists(os.path.join(d, MARKER)) else None
+
+
+CONFIG_PACK_SIZE = "~4 MB"
+
+
+def download_model_config(models_root, family, progress_cb=None, abort_event=None):
+    """Yalnızca ayar dosyaları (json/txt: yapı, zamanlayıcı, sözlük) — birkaç MB, ağırlık yok."""
+    from huggingface_hub import snapshot_download
+    base = IMAGE_MODEL_BY_KEY[family]
+    dest = os.path.join(models_root, "configs", family)
+    os.makedirs(dest, exist_ok=True)
+    result = {"err": None}
+
+    def _run():
+        try:
+            snapshot_download(base["repo"], local_dir=dest, allow_patterns=["model_index.json", "*/*.json", "*/*.txt"],
+                              ignore_patterns=["*.safetensors", "*.bin", "*.ckpt", "*.onnx*", "*.msgpack", "*.h5"],
+                              max_workers=2)
+        except Exception as e:  # noqa
+            result["err"] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    while t.is_alive():
+        t.join(0.5)
+        if progress_cb:
+            progress_cb(folder_size_bytes(dest), 4 * MB)
+        if abort_event is not None and abort_event.is_set():
+            raise AbortedError("user")
+    if result["err"] is not None:
+        raise result["err"]
+    if not os.path.exists(os.path.join(dest, "model_index.json")):
+        raise RuntimeError("model_index.json missing — config download incomplete")
+    with open(os.path.join(dest, MARKER), "w", encoding="utf-8") as f:
+        json.dump({"repo": base["repo"], "config_only": True, "date": time.strftime("%Y-%m-%d %H:%M")}, f)
+    return dest
+
+
+class CustomModelConfigMissing(RuntimeError):
+    pass
+
+
+def load_custom_pipeline(model, kwargs):
+    """Tek dosyalık SD 1.5 / SDXL modelini ağ kullanmadan açar (ayarlar yerel klasörden)."""
+    import diffusers
+    family = model["family"]
+    cfg = custom_config_dir(model["models_root"], family)
+    if not cfg:
+        raise CustomModelConfigMissing(family)
+    cls = diffusers.StableDiffusionXLPipeline if family == "sdxl" else diffusers.StableDiffusionPipeline
+    return cls.from_single_file(model["file"], config=cfg, local_files_only=True, **kwargs)
+
+
 def scan_loras(paths):
     """Tüm LoRA'lar ve stil kartları. Kendi ürettiklerimizin yanında aynı adlı .json bilgi dosyası bulunur."""
     out = []
@@ -4186,7 +4729,9 @@ def scan_loras(paths):
         if not os.path.isdir(d):
             continue
         for root, dirs, files in os.walk(d):
-            dirs[:] = sorted(x for x in dirs if not x.endswith("_samples") and not x.startswith("."))
+            dirs[:] = sorted(x for x in dirs if not x.endswith("_samples") and not x.startswith(".") and
+                             not (origin == "external" and os.path.normpath(root) == os.path.normpath(d) and
+                                  x.lower() == CUSTOM_MODELS_SUBDIR))
             for fn in sorted(files):
                 if len(out) >= LORA_MAX_FILES:
                     return out
@@ -4214,6 +4759,9 @@ def scan_loras(paths):
                             info = {}
                     try:
                         meta, shapes = read_safetensors_header(p)
+                        if origin == "external" and classify_safetensors(meta, shapes)[0] in \
+                                CUSTOM_FAMILIES + ("unsupported",):
+                            continue      # tam model (checkpoint) LoRA değildir: model listesinde görünür
                         base = info.get("base") or detect_lora_base(meta, shapes)
                     except Exception:
                         meta, base = {}, "unknown"
@@ -4735,7 +5283,109 @@ DEFAULT_SELF_PROMPTS = [
 #   DPO bellek dostu uygulanır: önce gradyansız ileri geçişlerle katsayı bulunur, sonra kazanan ve
 #   kaybeden için AYRI geri yayılım yapılır (tek seferde ikisini tutmak gerekmez).
 # =============================================================================
-TRAIN_BASES = ("sd15",)
+TRAIN_BASES = ("sd15", "sdxl", "flux2_klein_4b", "zimage_turbo")
+# Eğitim modelleri. vram: güvenli çalışması için gereken en az VRAM (GB). FLUX.2 ve Z-Image, LoRA'yı damıtılmış
+# (hızlı) modelde değil, aynı ailenin damıtılmamış "base" modelinde eğitir; eğitilen LoRA hızlı modelde kullanılır.
+# Base modelden yalnızca dönüştürücü (transformer) indirilir; VAE, metin kodlayıcı ve sözlük kurulu modelden alınır.
+TRAIN_SPECS = {
+    "sd15": {"vram": 3.5, "res": 512, "fallback": (384,), "cpu_ok": True, "ram": 8},
+    "sdxl": {"vram": 10.0, "res": 1024, "fallback": (768, 512), "cpu_ok": False, "ram": 16, "res_swap": 768},
+    "flux2_klein_4b": {"vram": 12.0, "res": 512, "fallback": (384,), "cpu_ok": False, "ram": 24,
+                       "base_repo": "black-forest-labs/FLUX.2-klein-base-4B", "base_name": "FLUX.2 [klein] base 4B",
+                       "base_gb": 7.8, "license": "Apache-2.0", "sample_steps": 24, "sample_cfg": 4.0},
+    "zimage_turbo": {"vram": 16.0, "res": 512, "fallback": (384,), "cpu_ok": False, "ram": 28,
+                     "base_repo": "Tongyi-MAI/Z-Image", "base_name": "Z-Image (base)", "base_gb": 12.3,
+                     "license": "Apache-2.0", "sample_steps": 28, "sample_cfg": 4.0},
+}
+
+
+SWAP_MIN_VRAM = 3.5           # RAM destekli eğitim için en az VRAM (4 GB kartlar)
+
+
+def train_ready(hw, key):
+    """
+    (uygun_mu, durum) — durum: '' (tamamen ekran kartında) | 'swap' (RAM destekli, yavaş) |
+    'vram' (NVIDIA GPU yok ya da 3.5 GB'tan az) | 'ram' (RAM yetmez).
+    """
+    sp = TRAIN_SPECS[key]
+    if sp["cpu_ok"]:
+        return True, ""
+    if not hw.cuda_usable or hw.vram_gb < SWAP_MIN_VRAM - 0.3:
+        return False, "vram"
+    if hw.vram_gb >= sp["vram"] - 0.3:
+        return True, ""
+    if hw.ram_total_gb + 0.5 < sp["ram"]:
+        return False, "ram"
+    return True, "swap"
+
+
+def train_base_dir(models_root, key):
+    """Eğitimde kullanılan dönüştürücünün klasörü: base modeli varsa onun, yoksa kurulu modelin kendisi."""
+    sp = TRAIN_SPECS[key]
+    if sp.get("base_repo"):
+        return os.path.join(models_root, "train", key)
+    return image_model_dir(models_root, IMAGE_MODEL_BY_KEY[key])
+
+
+def is_train_base_installed(models_root, key):
+    if not TRAIN_SPECS[key].get("base_repo"):
+        return is_image_model_installed(models_root, IMAGE_MODEL_BY_KEY[key])
+    return os.path.exists(os.path.join(train_base_dir(models_root, key), MARKER))
+
+
+def download_train_base(models_root, key, progress_cb=None, abort_event=None):
+    """Base modelin yalnızca dönüştürücüsü (transformer/*) indirilir."""
+    from huggingface_hub import snapshot_download
+    sp = TRAIN_SPECS[key]
+    dest = train_base_dir(models_root, key)
+    allow = ["transformer/*.json", "transformer/*.safetensors"]
+    total = int(sp["base_gb"] * GB)
+    try:
+        infos = snapshot_download(sp["base_repo"], allow_patterns=allow, dry_run=True)
+        total = sum((i.file_size or 0) for i in infos) or total
+    except Exception:
+        pass
+    already = folder_size_bytes(dest) if os.path.isdir(dest) else 0
+    check_space(models_root, max(0, total - already) / GB + 1.0)
+    os.makedirs(dest, exist_ok=True)
+    result = {"err": None}
+
+    def _run():
+        try:
+            snapshot_download(sp["base_repo"], local_dir=dest, allow_patterns=allow, max_workers=4)
+        except Exception as e:  # noqa
+            result["err"] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    while t.is_alive():
+        t.join(1.0)
+        if progress_cb:
+            progress_cb(folder_size_bytes(dest), total)
+        if abort_event is not None and abort_event.is_set():
+            raise AbortedError("user")
+    if result["err"] is not None:
+        err = result["err"]
+        if isinstance(err, OSError) and getattr(err, "errno", None) == 28:
+            raise DiskFullError(drive_label(models_root), total / GB, disk_free_gb(models_root))
+        raise err
+    if not os.path.exists(os.path.join(dest, "transformer", "config.json")):
+        raise RuntimeError("transformer/config.json missing — download incomplete")
+    with open(os.path.join(dest, MARKER), "w", encoding="utf-8") as f:
+        json.dump({"repo": sp["base_repo"], "size_gb": round(folder_size_bytes(dest) / GB, 2),
+                   "date": time.strftime("%Y-%m-%d %H:%M")}, f)
+    return dest
+
+
+def make_trainer(paths, key, device, rank, lr, resolution=None):
+    model = IMAGE_MODEL_BY_KEY[key]
+    path = image_model_dir(paths.models, model)
+    if key == "sd15":
+        return LoraTrainer(path, model, device, rank=rank, lr=lr, resolution=resolution)
+    if key == "sdxl":
+        return SDXLLoraTrainer(path, model, device, rank=rank, lr=lr, resolution=resolution)
+    return FlowLoraTrainer(path, train_base_dir(paths.models, key), model, device, rank=rank, lr=lr,
+                           resolution=resolution)
 STYLE_RANK, PREF_RANK = 16, 8
 STYLE_LR, PREF_LR = 1e-4, 1e-5
 
@@ -4826,7 +5476,14 @@ def _lora_sidecar(path):
         return {}
 
 
-def pick_lora_path(d, name, slug, learn, rank):
+TRAIN_SUFFIX = {"sd15": "sd15", "sdxl": "sdxl", "flux2_klein_4b": "flux2", "zimage_turbo": "zimage"}
+
+
+class TrainVramError(RuntimeError):
+    """Seçilen eğitim modeli için ekran kartı belleği yetersiz (ya da NVIDIA GPU yok)."""
+
+
+def pick_lora_path(d, name, slug, learn, rank, base="sd15"):
     """
     Eğitimin kaydedileceği dosya. Aynı veri seti + tür + ayarla eğitilmiş bir LoRA varsa ondan devam edilir;
     yoksa ilk BOŞ ad seçilir (ad, ad_place, ad_place_2 …). Başka bir eğitime ait LoRA asla ezilmez.
@@ -4839,7 +5496,8 @@ def pick_lora_path(d, name, slug, learn, rank):
         if os.path.exists(p):
             info = _lora_sidecar(p)
             if info.get("dataset") == slug and info.get("rank") == rank and \
-                    norm_learn(info.get("learn") or info.get("type")) == learn:
+                    norm_learn(info.get("learn") or info.get("type")) == learn and \
+                    (info.get("base") or "sd15") == base:
                 return p, info
         elif free is None and not os.path.exists(os.path.splitext(p)[0] + ".json"):
             free = p
@@ -5039,7 +5697,7 @@ class LoraTrainer:
                         out.append(None)
                         weights.append(None)
                         continue
-                    lat = self.vae.encode(x.to(self.device, self.wdtype)).latent_dist.sample() * self.vae.config.scaling_factor
+                    lat = self._encode_latent(x)
                     out.append(lat.to("cpu"))
                     weights.append(wt)
                     if progress_cb:
@@ -5048,6 +5706,17 @@ class LoraTrainer:
             self.vae.to("cpu")
             free_gpu_memory()
         return (out, weights) if with_weights else out
+
+    def _abort_cb(self, _pipe, _i, _t, kw):
+        """Örnek görsel üretirken Durdur'a basılırsa hemen çık."""
+        ab = getattr(self, "abort_event", None)
+        if ab is not None and ab.is_set():
+            raise AbortedError("user")
+        return kw
+
+    def _encode_latent(self, x):
+        """Görsel → modelin gizli uzayı (SD 1.5: VAE örneği × ölçek)."""
+        return self.vae.encode(x.to(self.device, self.wdtype)).latent_dist.sample() * self.vae.config.scaling_factor
 
     def _encode_text_on_device(self, text):
         torch = self.torch
@@ -5229,7 +5898,8 @@ class LoraTrainer:
         try:
             with torch.no_grad(), self._autocast():
                 img = pipe(prompt, negative_prompt=negative or None, num_inference_steps=steps, guidance_scale=cfg,
-                           width=size, height=size, generator=torch.Generator("cpu").manual_seed(int(seed))).images[0]
+                           width=size, height=size, generator=torch.Generator("cpu").manual_seed(int(seed)),
+                           callback_on_step_end=self._abort_cb).images[0]
         finally:
             self.unet.train()
             self.vae.to("cpu")
@@ -5239,6 +5909,700 @@ class LoraTrainer:
 
     def close(self):
         self.unet = self.vae = self.text_encoder = None
+        self.opt = None
+        free_gpu_memory()
+
+
+class ParamSwapper:
+    """
+    RAM destekli çalıştırma ("blok takası"): modelin donmuş ağırlıkları RAM'de durur; bir parça (blok) çalışacağı
+    an ekran kartına kopyalanır, iş bitince RAM'deki kopyasına geri bağlanır. Eğitilen LoRA ağırlıkları, tamponlar ve
+    küçük parçalar hep ekran kartında kalır. Ekran kartında yer kaldıkça baştan itibaren parçalar kalıcı tutulur
+    (kart büyüdükçe hızlanır). Geri yayılım (backward), ileri geçişte kopyalanan GPU tensörlerini kullanır; gradyan
+    kontrol noktaları (checkpointing) her bloğu geri yayılımda yeniden çalıştırdığında kanca yeniden kopyalar.
+    """
+    SMALL = 32 * MB              # bundan küçük parçalar her zaman ekran kartında
+    MAX_UNIT = 400 * MB          # bundan büyük parçalar alt parçalarına bölünür
+
+    def __init__(self, model, device, budget_bytes, pin=True, small=None, max_unit=None, abort_event=None):
+        torch = import_torch()
+        self.abort_event = abort_event
+        if small is not None:
+            self.SMALL = small
+        if max_unit is not None:
+            self.MAX_UNIT = max_unit
+        self.torch = torch
+        self.device = torch.device(device)
+        self.model = model
+        self.handles = []
+        self.units = []                       # [(modül, [(parametre, ram_kopyası)])]
+        seen = set()
+        units = []
+
+        def frozen_bytes(m, recurse=True):
+            return sum(p.numel() * p.element_size() for p in m.parameters(recurse=recurse)
+                       if not p.requires_grad and id(p) not in seen)
+
+        def walk(m):
+            own = [p for p in m.parameters(recurse=False) if not p.requires_grad and id(p) not in seen]
+            total = frozen_bytes(m)
+            if total <= self.MAX_UNIT or not list(m.children()):
+                ps = [p for p in m.parameters() if not p.requires_grad and id(p) not in seen]
+                for p in ps:
+                    seen.add(id(p))
+                if ps:
+                    units.append((m, ps))
+                return
+            if own:                            # alt modüllere inen bir modülün kendi doğrudan ağırlıkları
+                for p in own:
+                    seen.add(id(p))
+                units.append((m, own))
+            for c in m.children():
+                walk(c)
+
+        walk(model)
+        if pin:
+            # Sabitlenmiş (pinned) bellek kopyayı hızlandırır ama Windows onu diske yazamaz; büyükse Windows diğer
+            # her şeyi sayfa dosyasına iter. Bu yüzden yalnızca RAM'in küçük bir payıysa kullanılır.
+            total = sum(sum(p.numel() * p.element_size() for p in ps) for _m, ps in units)
+            pin = (total - budget_bytes) < ram_total_gb() * GB * 0.20
+        for b in model.buffers():
+            b.data = b.data.to(self.device)
+        for p in model.parameters():
+            if p.requires_grad:
+                p.data = p.data.to(self.device)
+        used = 0
+        swapped_bytes = 0
+        self.resident_bytes = 0
+        for m, ps in units:
+            size = sum(p.numel() * p.element_size() for p in ps)
+            if size <= self.SMALL or used + size <= budget_bytes:
+                for p in ps:
+                    p.data = p.data.to(self.device)
+                used += size
+                continue
+            pairs = []
+            for p in ps:
+                cpu = p.data.to("cpu")
+                if pin:
+                    try:
+                        cpu = cpu.pin_memory()
+                    except Exception:
+                        pin = False
+                p.data = cpu
+                pairs.append((p, cpu))
+            swapped_bytes += size
+            self.units.append((m, pairs))
+            self.handles.append(m.register_forward_pre_hook(self._make_pre(pairs)))
+            self.handles.append(m.register_forward_hook(self._make_post(pairs)))
+        self.resident_bytes = used
+        self.swapped_bytes = swapped_bytes
+
+    def _make_pre(self, pairs):
+        dev = self.device
+
+        def pre(_m, _args):
+            ab = self.abort_event
+            if ab is not None and ab.is_set():
+                raise AbortedError("user")      # Durdur'a basıldı: adımın ortasında bile hemen çık
+            for p, cpu in pairs:
+                p.data = cpu.to(dev, non_blocking=True)
+        return pre
+
+    def _make_post(self, pairs):
+        def post(_m, _args, _out):
+            for p, cpu in pairs:
+                p.data = cpu          # GPU kopyası, geri yayılım için gerekiyorsa grafikte yaşamaya devam eder
+        return post
+
+    def remove(self, to="cpu"):
+        for h in self.handles:
+            h.remove()
+        self.handles = []
+        for _m, pairs in self.units:
+            for p, cpu in pairs:
+                p.data = cpu
+        self.units = []
+        if to is not None:
+            self.model.to(to)
+        gc.collect()
+        release_pinned_cache()
+
+
+def release_pinned_cache():
+    """PyTorch'un önbellekte tuttuğu sabitlenmiş RAM bloklarını Windows'a geri verir."""
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return
+    for fn in ("_host_emptyCache", "_accelerator_emptyHostCache"):
+        try:
+            getattr(torch._C, fn)()
+            return
+        except Exception:
+            continue
+
+
+def gpu_free_bytes(device):
+    torch = import_torch()
+    try:
+        free, _total = torch.cuda.mem_get_info(torch.device(device))
+        return int(free)
+    except Exception:
+        return 0
+
+
+def module_bytes(m):
+    return sum(p.numel() * p.element_size() for p in m.parameters())
+
+
+class SDXLLoraTrainer(LoraTrainer):
+    """SDXL LoRA eğitimi: iki metin kodlayıcı, ek zaman/boyut koşulları. VAE fp32 kodlar (SDXL VAE fp16'da bozulur)."""
+
+    def __init__(self, model_path, model, device, rank=STYLE_RANK, lr=STYLE_LR, resolution=None):
+        torch = import_torch()
+        import contextlib
+        from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+        from transformers import CLIPTextModel, CLIPTextModelWithProjection, AutoTokenizer
+        from peft import LoraConfig
+        self.torch, self._ctx = torch, contextlib
+        self.device = torch.device(device)
+        self.on_gpu = self.device.type == "cuda"
+        self.wdtype = torch.float16 if self.on_gpu else torch.float32
+        self.res = int(resolution or TRAIN_SPECS["sdxl"]["res"])
+        kw = dict(torch_dtype=self.wdtype)
+        variant = model.get("variant")
+
+        def _load(cls, sub, **extra):
+            k = dict(kw, **extra)
+            try:
+                return cls.from_pretrained(model_path, subfolder=sub, variant=variant, **k) if variant \
+                    else cls.from_pretrained(model_path, subfolder=sub, **k)
+            except (OSError, ValueError):
+                return cls.from_pretrained(model_path, subfolder=sub, **k)
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer")
+        self.tokenizer_2 = AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer_2")
+        self.text_encoder = _load(CLIPTextModel, "text_encoder")
+        self.text_encoder_2 = _load(CLIPTextModelWithProjection, "text_encoder_2")
+        self.vae = _load(AutoencoderKL, "vae", torch_dtype=torch.float32)
+        self.unet = _load(UNet2DConditionModel, "unet")
+        self.noise_scheduler = DDPMScheduler.from_pretrained(model_path, subfolder="scheduler")
+        for m in (self.text_encoder, self.text_encoder_2, self.vae, self.unet):
+            m.requires_grad_(False)
+        self.lora_config = LoraConfig(r=rank, lora_alpha=rank, init_lora_weights="gaussian",
+                                      target_modules=["to_k", "to_q", "to_v", "to_out.0"])
+        self.unet.add_adapter(self.lora_config)
+        for p in self.unet.parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+        self.params = [p for p in self.unet.parameters() if p.requires_grad]
+        try:
+            self.unet.enable_gradient_checkpointing()
+        except Exception:
+            pass
+        self.unet.train()
+        self._on_device = False
+        self.swapper = None
+        self.swap_info = None
+        self.reserve = int(2.5 * GB)
+        if self.on_gpu and resolution is None and \
+                module_bytes(self.unet) + self.reserve > gpu_free_bytes(self.device):
+            self.res = int(TRAIN_SPECS["sdxl"]["res_swap"])      # RAM destekli: daha küçük ara sonuçlar
+        self.opt = torch.optim.AdamW(self.params, lr=lr, weight_decay=1e-2)
+        self.scaler = torch.amp.GradScaler("cuda") if self.on_gpu else None
+        self.pred_type = self.noise_scheduler.config.get("prediction_type", "epsilon")
+        self.steps = 0
+        self._emb_cache = {}
+        self.noise_offset = 0.05
+        try:
+            self.vae_scale = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        except Exception:
+            self.vae_scale = 8
+
+    def _ensure_unet(self):
+        if self._on_device:
+            return
+        self._on_device = True
+        if not self.on_gpu:
+            self.unet.to(self.device)
+            return
+        free_gpu_memory()
+        free = gpu_free_bytes(self.device)
+        if module_bytes(self.unet) + self.reserve <= free:
+            self.unet.to(self.device)
+            return
+        self.swapper = ParamSwapper(self.unet, self.device, max(0, free - self.reserve),
+                                    abort_event=getattr(self, "abort_event", None))
+        self.swap_info = (self.swapper.resident_bytes / GB, self.swapper.swapped_bytes / GB)
+
+    def prepare_device(self):
+        self._ensure_unet()
+        return self.swap_info
+
+    def _encode_latent(self, x):
+        return self.vae.encode(x.to(self.device, self.torch.float32)).latent_dist.sample() * self.vae.config.scaling_factor
+
+    def _encode_text_on_device(self, text):
+        torch = self.torch
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        with torch.no_grad():
+            embs = []
+            pooled = None
+            for tok, te in ((self.tokenizer, self.text_encoder), (self.tokenizer_2, self.text_encoder_2)):
+                ids = tok(text, padding="max_length", max_length=tok.model_max_length, truncation=True,
+                          return_tensors="pt").input_ids.to(self.device)
+                out = te(ids, output_hidden_states=True)
+                embs.append(out.hidden_states[-2])
+                if te is self.text_encoder_2:
+                    pooled = out[0]
+            emb = (torch.cat(embs, dim=-1).to("cpu"), pooled.to("cpu"))
+        if len(self._emb_cache) < 4000:
+            self._emb_cache[text] = emb
+        return emb
+
+    def _te_to(self, dev):
+        self.text_encoder.to(dev)
+        self.text_encoder_2.to(dev)
+
+    def encode_text(self, text):
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        self._te_to(self.device)
+        try:
+            return self._encode_text_on_device(text)
+        finally:
+            self._te_to("cpu")
+
+    def encode_texts(self, texts, progress_cb=None):
+        self._te_to(self.device)
+        try:
+            out = []
+            for n, t in enumerate(texts):
+                out.append(self._encode_text_on_device(t))
+                if progress_cb:
+                    progress_cb(n + 1, len(texts))
+            return out
+        finally:
+            self._te_to("cpu")
+            free_gpu_memory()
+
+    def _added(self, pooled, n):
+        torch = self.torch
+        r = float(self.res)
+        tid = torch.tensor([[r, r, 0.0, 0.0, r, r]] * n, device=self.device, dtype=self.wdtype)
+        return {"text_embeds": pooled.to(self.device, self.wdtype), "time_ids": tid}
+
+    def step_sft(self, lat, emb, noise=None, t=None, weight=None):
+        torch = self.torch
+        self._ensure_unet()
+        prompt, pooled = emb
+        lat = lat.to(self.device, self.wdtype)
+        prompt = prompt.to(self.device, self.wdtype)
+        if noise is None:
+            noise = torch.randn_like(lat)
+            if self.noise_offset:
+                noise = noise + self.noise_offset * torch.randn(lat.shape[0], lat.shape[1], 1, 1, device=lat.device,
+                                                                dtype=lat.dtype)
+        if t is None:
+            t = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (lat.shape[0],), device=lat.device)
+        noisy = self.noise_scheduler.add_noise(lat, noise, t.long())
+        with self._autocast():
+            pred = self.unet(noisy, t, prompt, added_cond_kwargs=self._added(pooled, lat.shape[0])).sample
+        target = self._target(lat, noise, t)
+        if weight is None:
+            loss = self._mse(pred, target)
+        else:
+            w = weight.to(self.device, torch.float32)
+            err = (pred.float() - target.float()) ** 2
+            loss = (err * w).sum() / (w.sum() * err.shape[1]).clamp_min(1e-6)
+        self._backward(loss)
+        self._opt_step()
+        return float(loss.detach())
+
+    def step_dpo(self, *a, **k):
+        raise NotImplementedError("preference training is SD 1.5 only")
+
+    def save(self, out_path, info):
+        from diffusers import StableDiffusionXLPipeline
+        d, fn = os.path.split(out_path)
+        os.makedirs(d, exist_ok=True)
+        check_space(d, 0.3)
+        part = fn + ".part"
+        StableDiffusionXLPipeline.save_lora_weights(save_directory=d, unet_lora_layers=self.lora_state(),
+                                                    weight_name=part, safe_serialization=True)
+        os.replace(os.path.join(d, part), out_path)
+        with open(os.path.splitext(out_path)[0] + ".json", "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=1)
+        return out_path
+
+    def sample(self, prompt, negative="", seed=1234, steps=20, cfg=7.0, size=None):
+        torch = self.torch
+        from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
+        sched = DPMSolverMultistepScheduler.from_config(self.noise_scheduler.config, use_karras_sigmas=True,
+                                                        algorithm_type="dpmsolver++")
+        self._ensure_unet()
+        dev = self.device
+        cls = type("AilsSampleXL", (StableDiffusionXLPipeline,), {"_execution_device": property(lambda _s: dev)})
+        pipe = cls(vae=self.vae, text_encoder=self.text_encoder, text_encoder_2=self.text_encoder_2,
+                   tokenizer=self.tokenizer, tokenizer_2=self.tokenizer_2, unet=self.unet, scheduler=sched)
+        pipe.set_progress_bar_config(disable=True)
+        size = int(size or self.res)
+        self.vae.to(self.device)
+        self._te_to(self.device)
+        self.unet.eval()
+        try:
+            with torch.no_grad(), self._autocast():
+                img = pipe(prompt, negative_prompt=negative or None, num_inference_steps=steps, guidance_scale=cfg,
+                           width=size, height=size, generator=torch.Generator("cpu").manual_seed(int(seed)),
+                           callback_on_step_end=self._abort_cb).images[0]
+        finally:
+            self.unet.train()
+            self.vae.to("cpu")
+            self._te_to("cpu")
+            free_gpu_memory()
+        return img
+
+    def close(self):
+        if self.swapper is not None:
+            try:
+                self.swapper.remove(to=None)
+            except Exception:
+                pass
+        self.swapper = None
+        self.unet = self.vae = self.text_encoder = self.text_encoder_2 = None
+        self.opt = None
+        free_gpu_memory()
+
+
+class FlowLoraTrainer(LoraTrainer):
+    """
+    Akış eşleştirmeli (flow matching) DiT modelleri için LoRA eğitimi: FLUX.2 [klein] 4B ve Z-Image.
+    Dönüştürücü base (damıtılmamış) modelden, VAE / metin kodlayıcı / sözlük kurulu (hızlı) modelden alınır.
+    Bellek sırası: önce görseller (VAE), sonra metinler (metin kodlayıcı; iş bitince bellekten tamamen silinir),
+    en son dönüştürücü GPU'ya alınır — 12 GB'ta FLUX.2 eğitimi böyle sığar.
+    """
+
+    def __init__(self, model_path, base_dir, model, device, rank=STYLE_RANK, lr=STYLE_LR, resolution=None):
+        torch = import_torch()
+        import contextlib
+        import importlib
+        import diffusers
+        import transformers
+        from peft import LoraConfig
+        self.torch, self._ctx = torch, contextlib
+        self.key = model["key"]
+        self.flux = self.key == "flux2_klein_4b"
+        self.device = torch.device(device)
+        self.on_gpu = self.device.type == "cuda"
+        self.wdtype = torch.bfloat16 if self.on_gpu else torch.float32
+        self.res = int(resolution or TRAIN_SPECS[self.key]["res"])
+        self.res = max(64, self.res // 16 * 16)
+        with open(os.path.join(model_path, "model_index.json"), encoding="utf-8") as f:
+            idx = json.load(f)
+
+        def cls_of(comp):
+            lib, name = idx[comp]
+            return getattr(diffusers if lib == "diffusers" else transformers, name)
+
+        kw = dict(torch_dtype=self.wdtype)
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer")
+        self.text_encoder = cls_of("text_encoder").from_pretrained(model_path, subfolder="text_encoder", **kw)
+        self.vae = cls_of("vae").from_pretrained(model_path, subfolder="vae", **kw)
+        tdir = base_dir if os.path.isdir(os.path.join(base_dir, "transformer")) else model_path
+        self.transformer = cls_of("transformer").from_pretrained(tdir, subfolder="transformer", **kw)
+        self.noise_scheduler = diffusers.FlowMatchEulerDiscreteScheduler.from_pretrained(model_path,
+                                                                                          subfolder="scheduler")
+        self._pipe_cls = cls_of_pipe = getattr(diffusers, idx["_class_name"])
+        self._pipe_mod = importlib.import_module(cls_of_pipe.__module__)
+        for m in (self.text_encoder, self.vae, self.transformer):
+            m.requires_grad_(False)
+        if self.flux:
+            targets = ["to_q", "to_k", "to_v", "to_out.0", "add_q_proj", "add_k_proj", "add_v_proj", "to_add_out",
+                       "to_qkv_mlp_proj"]
+        else:
+            targets = ["to_q", "to_k", "to_v", "to_out.0"]
+        self.lora_config = LoraConfig(r=rank, lora_alpha=rank, init_lora_weights="gaussian", target_modules=targets)
+        self.transformer.add_adapter(self.lora_config)
+        for p in self.transformer.parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+        self.params = [p for p in self.transformer.parameters() if p.requires_grad]
+        try:
+            self.transformer.enable_gradient_checkpointing()
+        except Exception:
+            pass
+        self.transformer.train()
+        self._on_device = False
+        self.swapper = None
+        self.swap_info = None             # (ekran kartında GB, RAM'den taşınan GB) — RAM destekli ise
+        self.reserve = int(2.0 * GB)      # ara sonuçlar + LoRA + iyileştirici durumu için boş bırakılan VRAM
+        self.opt = torch.optim.AdamW(self.params, lr=lr, weight_decay=1e-2)
+        self.scaler = None
+        self.pred_type = "flow"
+        self.steps = 0
+        self._emb_cache = {}
+        self.noise_offset = 0.0
+        vs = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.vae_scale = vs * 2 if self.flux else vs        # ağırlık haritası: FLUX.2'de 2×2 yamalı token ızgarası
+
+    # ---- yardımcılar
+    def _autocast(self):
+        if self.on_gpu:
+            return self.torch.autocast("cuda", dtype=self.torch.bfloat16)
+        return self._ctx.nullcontext()
+
+    def _ensure_transformer(self):
+        """Dönüştürücüyü ekran kartına alır; sığmıyorsa RAM destekli (blok takası) çalıştırır."""
+        if self._on_device:
+            return
+        self._on_device = True
+        if not self.on_gpu:
+            self.transformer.to(self.device)
+            return
+        free_gpu_memory()
+        need = module_bytes(self.transformer)
+        free = gpu_free_bytes(self.device)
+        if need + self.reserve <= free:
+            self.transformer.to(self.device)
+            return
+        self.swapper = ParamSwapper(self.transformer, self.device, max(0, free - self.reserve),
+                                    abort_event=getattr(self, "abort_event", None))
+        self.swap_info = (self.swapper.resident_bytes / GB, self.swapper.swapped_bytes / GB)
+
+    def prepare_device(self):
+        self._ensure_transformer()
+        return self.swap_info
+
+    def _encode_latent(self, x):
+        torch = self.torch
+        x = x.to(self.device, self.wdtype)
+        if self.flux:
+            lat = self.vae.encode(x).latent_dist.mode()
+            lat = self._pipe_cls._patchify_latents(lat)
+            mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(lat.device, lat.dtype)
+            std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + self.vae.config.batch_norm_eps).to(
+                lat.device, lat.dtype)
+            return (lat - mean) / std
+        lat = self.vae.encode(x).latent_dist.sample()
+        return (lat - self.vae.config.shift_factor) * self.vae.config.scaling_factor
+
+    def _encode_text_on_device(self, text):
+        torch = self.torch
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        with torch.no_grad():
+            if self.flux:
+                msgs = [{"role": "user", "content": text}]
+                t = self.tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                                       enable_thinking=False)
+                ti = self.tokenizer(t, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
+                out = self.text_encoder(input_ids=ti["input_ids"].to(self.device),
+                                        attention_mask=ti["attention_mask"].to(self.device),
+                                        output_hidden_states=True, use_cache=False)
+                hs = torch.stack([out.hidden_states[k] for k in (9, 18, 27)], dim=1)
+                b, ch, ln, d = hs.shape
+                emb = hs.permute(0, 2, 1, 3).reshape(b, ln, ch * d).to("cpu", self.wdtype)
+            else:
+                msgs = [{"role": "user", "content": text}]
+                t = self.tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                                       enable_thinking=True)
+                ti = self.tokenizer([t], padding="max_length", max_length=512, truncation=True, return_tensors="pt")
+                ids = ti.input_ids.to(self.device)
+                mask = ti.attention_mask.to(self.device).bool()
+                hs = self.text_encoder(input_ids=ids, attention_mask=mask, output_hidden_states=True).hidden_states[-2]
+                emb = hs[0][mask[0]].to("cpu", self.wdtype)
+        if len(self._emb_cache) < 4000:
+            self._emb_cache[text] = emb
+        return emb
+
+    def encode_text(self, text):
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        if self.text_encoder is None:
+            raise RuntimeError("text encoder already released")
+        sw = self._te_on_device()
+        try:
+            return self._encode_text_on_device(text)
+        finally:
+            self._te_off(sw)
+
+    def encode_texts(self, texts, progress_cb=None):
+        """Tüm metinler (ve örnek görselin boş negatif metni) kodlanır; sonra metin kodlayıcı bellekten silinir."""
+        sw = self._te_on_device()
+        try:
+            out = []
+            ab = getattr(self, "abort_event", None)
+            for n, t in enumerate(texts):
+                if ab is not None and ab.is_set():
+                    raise AbortedError("user")
+                out.append(self._encode_text_on_device(t))
+                if progress_cb:
+                    progress_cb(n + 1, len(texts))
+            self._encode_text_on_device("")
+            return out
+        finally:
+            self._te_off(sw)
+            self.text_encoder = None
+            free_gpu_memory()
+
+    def _te_on_device(self):
+        """Metin kodlayıcı ekran kartına; sığmıyorsa RAM destekli. Dönüş: takasçı ya da None."""
+        if not self.on_gpu:
+            return None
+        free_gpu_memory()
+        need = module_bytes(self.text_encoder)
+        free = gpu_free_bytes(self.device)
+        if need + int(1.0 * GB) <= free:
+            self.text_encoder.to(self.device)
+            return None
+        # metin kodlayıcı yalnızca bir kez, kısa süre çalışır: sabitlenmiş bellek kullanılmaz (RAM'i kilitlemesin)
+        return ParamSwapper(self.text_encoder, self.device, max(0, free - int(1.5 * GB)), pin=False,
+                            abort_event=getattr(self, "abort_event", None))
+
+    def _te_off(self, sw):
+        if sw is not None:
+            sw.remove(to="cpu")
+        elif self.text_encoder is not None:
+            self.text_encoder.to("cpu")
+        free_gpu_memory()
+
+    def _sigmas(self, n, seq_len):
+        torch = self.torch
+        u = torch.sigmoid(torch.randn(n, device=self.device))
+        if self.flux:
+            mu = self._pipe_mod.compute_empirical_mu(image_seq_len=seq_len, num_steps=50)
+        else:
+            mu = self._pipe_mod.calculate_shift(seq_len)
+        e = math.exp(mu)
+        return (e / (e + (1.0 / u.clamp(1e-4, 1 - 1e-4) - 1.0))).clamp(1e-3, 1.0)
+
+    def _predict(self, noisy, sigma, emb):
+        """Modelin hız tahmini (v = gürültü − görsel), (B, C, H, W) biçiminde."""
+        torch = self.torch
+        if self.flux:
+            pc = self._pipe_cls
+            tokens = pc._pack_latents(noisy)
+            img_ids = pc._prepare_latent_ids(noisy).to(self.device)
+            txt = emb.to(self.device, self.wdtype)
+            txt_ids = pc._prepare_text_ids(txt).to(self.device)
+            out = self.transformer(hidden_states=tokens.to(self.wdtype), timestep=sigma.to(self.wdtype), guidance=None,
+                                   encoder_hidden_states=txt, txt_ids=txt_ids, img_ids=img_ids, return_dict=False)[0]
+            b, c, h, w = noisy.shape
+            return out.permute(0, 2, 1).reshape(b, c, h, w)
+        x = [noisy[0].unsqueeze(1).to(self.wdtype)]
+        cap = [emb.to(self.device, self.wdtype)]
+        out = self.transformer(x, (1.0 - sigma).to(self.wdtype), cap, return_dict=False)[0]
+        return -torch.stack([o.float() for o in out], dim=0).squeeze(2)
+
+    def step_sft(self, lat, emb, noise=None, t=None, weight=None):
+        torch = self.torch
+        self._ensure_transformer()
+        x0 = lat.to(self.device, torch.float32)
+        if noise is None:
+            noise = torch.randn_like(x0)
+        seq = (x0.shape[2] * x0.shape[3]) if self.flux else (x0.shape[2] // 2) * (x0.shape[3] // 2)
+        sigma = self._sigmas(x0.shape[0], seq) if t is None else t.to(self.device, torch.float32)
+        s = sigma.view(-1, 1, 1, 1)
+        noisy = (1.0 - s) * x0 + s * noise
+        with self._autocast():
+            pred = self._predict(noisy, sigma, emb)
+        target = noise - x0
+        if weight is None:
+            loss = self._mse(pred, target)
+        else:
+            w = weight.to(self.device, torch.float32)
+            if w.shape[-2:] != pred.shape[-2:]:
+                w = torch.nn.functional.interpolate(w, size=pred.shape[-2:], mode="nearest")
+            err = (pred.float() - target.float()) ** 2
+            loss = (err * w).sum() / (w.sum() * err.shape[1]).clamp_min(1e-6)
+        loss.backward()
+        self._opt_step()
+        return float(loss.detach())
+
+    def step_dpo(self, *a, **k):
+        raise NotImplementedError("preference training is SD 1.5 only")
+
+    # ---- kaydet / devam et / örnek görsel
+    def lora_state(self):
+        from peft.utils import get_peft_model_state_dict
+        return get_peft_model_state_dict(self.transformer)
+
+    def save(self, out_path, info):
+        d, fn = os.path.split(out_path)
+        os.makedirs(d, exist_ok=True)
+        check_space(d, 0.5)
+        part = fn + ".part"
+        self._pipe_cls.save_lora_weights(save_directory=d, transformer_lora_layers=self.lora_state(),
+                                         weight_name=part, safe_serialization=True)
+        os.replace(os.path.join(d, part), out_path)
+        with open(os.path.splitext(out_path)[0] + ".json", "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=1)
+        return out_path
+
+    def load_state(self, path):
+        from safetensors.torch import load_file
+        from peft import set_peft_model_state_dict
+        sd = load_file(path)
+        sd = {k[len("transformer."):]: v for k, v in sd.items() if k.startswith("transformer.")}
+        res = set_peft_model_state_dict(self.transformer, sd, adapter_name="default")
+        for p in self.transformer.parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+        return res
+
+    def sample(self, prompt, negative="", seed=1234, steps=None, cfg=None, size=None):
+        torch = self.torch
+        sp = TRAIN_SPECS[self.key]
+        steps = int(steps or sp["sample_steps"])
+        cfg = float(sp["sample_cfg"] if cfg is None else cfg)
+        pos = self.encode_text(prompt)
+        neg = self.encode_text(negative or "")
+        self._ensure_transformer()
+        kwargs = dict(scheduler=self.noise_scheduler, vae=self.vae, text_encoder=None, tokenizer=self.tokenizer,
+                      transformer=self.transformer)
+        if self.flux:
+            kwargs["is_distilled"] = False
+        dev = self.device
+        cls = type("AilsSamplePipe", (self._pipe_cls,), {"_execution_device": property(lambda _s: dev)})
+        pipe = cls(**kwargs)
+        pipe.set_progress_bar_config(disable=True)
+        size = int(size or self.res)
+        self.vae.to(self.device)
+        self.transformer.eval()
+        g = torch.Generator("cpu").manual_seed(int(seed))
+        ab = getattr(self, "abort_event", None)
+
+        def _cb(_p, _i, _t, kw):
+            if ab is not None and ab.is_set():
+                raise AbortedError("user")
+            return kw
+        try:
+            with torch.no_grad(), self._autocast():
+                if self.flux:
+                    img = pipe(prompt_embeds=pos.to(self.device, self.wdtype),
+                               negative_prompt_embeds=neg.to(self.device, self.wdtype), num_inference_steps=steps,
+                               guidance_scale=cfg, width=size, height=size, generator=g,
+                               callback_on_step_end=_cb).images[0]
+                else:
+                    img = pipe(prompt_embeds=[pos.to(self.device, self.wdtype)],
+                               negative_prompt_embeds=[neg.to(self.device, self.wdtype)], num_inference_steps=steps,
+                               guidance_scale=cfg, width=size, height=size, generator=g,
+                               callback_on_step_end=_cb).images[0]
+        finally:
+            self.transformer.train()
+            self.vae.to("cpu")
+            free_gpu_memory()
+        return img
+
+    def close(self):
+        if self.swapper is not None:
+            try:
+                self.swapper.remove(to=None)
+            except Exception:
+                pass
+        self.swapper = None
+        self.transformer = self.vae = self.text_encoder = None
         self.opt = None
         free_gpu_memory()
 
@@ -5314,23 +6678,29 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     preset = LEARN_PRESETS[learn]
     tag = (tag or data.get("tag") or data.get("name") or slug).strip()
     trigger = ascii_trigger(tag, learn)
-    base_name = safe_folder_name(tag, learn)
+    base_name = safe_folder_name(tag, learn) + ("" if model_key == "sd15" else "_" + TRAIN_SUFFIX[model_key])
     lora_dir = own_lora_dir(paths)
     os.makedirs(lora_dir, exist_ok=True)
-    out, prev = pick_lora_path(lora_dir, base_name, slug, learn, preset["rank"])
+    out, prev = pick_lora_path(lora_dir, base_name, slug, learn, preset["rank"], base=model_key)
     name = os.path.splitext(os.path.basename(out))[0]
     hide = bool(hide_faces) and learn == "place"
     face_mode = learn == "face"
     if (hide or face_mode) and not (detector_files_ok(paths.models) and cv2_installed(paths)):
         raise RuntimeError("face detector is not installed (needed to " + ("find faces)" if face_mode else
                                                                            "hide faces)"))
-    device = train_device(hw)
+    ok, _why = train_ready(hw, model_key)
+    if not ok:
+        raise TrainVramError((model_key, TRAIN_SPECS[model_key]["vram"], hw.vram_gb if hw.cuda_usable else 0.0))
+    if TRAIN_SPECS[model_key].get("base_repo") and not is_train_base_installed(paths.models, model_key):
+        raise RuntimeError("training base model is not installed: " + model_key)
+    device = train_device(hw) if model_key == "sd15" else hw.device
     log(msg("tr_log_load", device="GPU" if device != "cpu" else "CPU"))
     log(msg("tr_log_kind", kind=msg("learn_" + learn)))
+    log(msg("tr_log_base", base=model["name"]))
     if name != base_name and os.path.exists(os.path.join(lora_dir, base_name + ".safetensors")):
         log(msg("tr_log_keep_old", old=base_name + ".safetensors", new=name + ".safetensors"))
-    trainer = LoraTrainer(image_model_dir(paths.models, model), model, device, rank=preset["rank"], lr=preset["lr"],
-                          resolution=resolution)
+    trainer = make_trainer(paths, model_key, device, rank=preset["rank"], lr=preset["lr"], resolution=resolution)
+    trainer.abort_event = abort_event
     trainer.noise_offset = preset["noise_offset"]
     if prev:
         try:
@@ -5387,6 +6757,10 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     del lat_all, w_all
     embs = trainer.encode_texts(texts)
     sample_prompt = texts[0]
+    if hasattr(trainer, "prepare_device"):
+        sw = trainer.prepare_device()
+        if sw:
+            log(msg("tr_log_swap", gpu=sw[0], ram=sw[1]))
     base_steps = int(prev.get("steps", 0))
     info = {"name": tag, "tag": tag, "trigger": trigger, "base": model_key, "type": learn, "learn": learn,
             "dataset": slug, "images": n_img, "views": len(latents), "rank": preset["rank"], "res": trainer.res,
@@ -5397,10 +6771,10 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     losses = []
     log(msg("tr_log_train", trigger=trigger))
 
-    def checkpoint(final=False):
+    def checkpoint(final=False, stopped=False):
         info.update(steps=base_steps + trainer.steps, updated=time.strftime("%Y-%m-%d %H:%M"),
                     loss=round(sum(losses[-200:]) / max(1, len(losses[-200:])), 5) if losses else None)
-        if sample_each:
+        if sample_each and not stopped:
             try:
                 d = os.path.join(own_lora_dir(paths), name + "_samples")
                 os.makedirs(d, exist_ok=True)
@@ -5409,6 +6783,8 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
                 info["sample"] = sp
                 if on_sample:
                     on_sample(sp, info)
+            except AbortedError:
+                stopped = True              # örnek görsel yarıda kaldı: LoRA yine de kaydedilir
             except Exception as e:
                 if is_oom_error(e):
                     log(msg("tr_log_sample_oom"))
@@ -5416,23 +6792,45 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
                     raise
         trainer.save(out, info)
         log(msg("tr_log_saved_final" if final else "tr_log_saved", steps=info["steps"], loss=info.get("loss") or 0.0))
+        return stopped
 
     reason = None
+    last_report = [0.0]
+
+    def report(force=False):
+        now = time.monotonic()
+        if force or now - last_report[0] >= 1.0:       # adım ne kadar hızlı olursa olsun en çok saniyede bir
+            last_report[0] = now
+            _train_progress(progress_cb, ck, base_steps + trainer.steps)
+
     try:
+        report(force=True)
         while True:
             reason = ck.should_stop()
             if reason:
                 break
             i = _r.randrange(len(latents))
-            losses.append(trainer.step_sft(latents[i], embs[i], weight=weights[i]))
-            if trainer.steps % 10 == 0:
-                _train_progress(progress_cb, ck, base_steps + trainer.steps)
+            try:
+                losses.append(trainer.step_sft(latents[i], embs[i], weight=weights[i]))
+            except AbortedError:
+                try:
+                    trainer.opt.zero_grad(set_to_none=True)     # yarım kalan adım öğretilmez
+                except Exception:
+                    pass
+                reason = "stop"
+                break
+            report()
             if trainer.steps % 200 == 0:
                 log(msg("tr_log_step", steps=base_steps + trainer.steps,
                         loss=sum(losses[-200:]) / len(losses[-200:])))
             if ck.checkpoint_due():
-                checkpoint()
-        checkpoint(final=True)
+                if checkpoint():
+                    reason = "stop"
+                    break
+        report(force=True)
+        if reason == "stop":
+            log(msg("tr_log_stopping"))
+        checkpoint(final=True, stopped=(reason == "stop"))
     finally:
         trainer.close()
     info["stop_reason"] = reason

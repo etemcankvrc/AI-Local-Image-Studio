@@ -267,7 +267,7 @@ EN = {
     "log_oom": "⚠️ VRAM was not enough → switching to {profile} and retrying.",
     "log_oom_final": "❌ Not enough memory even in the lowest profile. Try a smaller model or lower resolution.",
     "log_ram_guard": "⛔ Memory Guard: free RAM dropped to {free:.1f} GB — the job was stopped safely to protect the system.",
-    "err_ram": "❌ Not enough free RAM for this model: needs ~{need:.1f} GB, free {avail:.1f} GB (a reserve is kept for Windows). Close other programs or choose a smaller model.",
+    "err_ram": "❌ Not enough memory for this model: ~{need:.1f} GB needed, only {avail:.1f} GB available even with the Windows page file. Close other programs, enlarge the page file ('System managed size') or choose a smaller model.",
     "log_download_start": "Downloading {name} ({size}) → {path}",
     "log_download_done": "✅ {name} downloaded.",
     "log_deleted": "🗑️ {name} deleted.",
@@ -392,9 +392,9 @@ EN = {
     "v2_sec_analysis": "4. Analysis & learning",
     "v2_mode": "Mode:",
     "v2_mode_light": "Light — word card (fast)",
-    "v2_mode_deep": "Deep — LoRA training (SD 1.5)",
+    "v2_mode_deep": "Deep — LoRA training",
     "v2_mode_light_info": "Reads the images and saves the {what} features they share as a word card; works with every image model.",
-    "v2_mode_deep_info": "Trains a {what} LoRA on your images (SD 1.5; runs on 4 GB VRAM). {extra} It can also learn a person's face — use real people only with their consent (or yourself).",
+    "v2_mode_deep_info": "Trains a {what} LoRA on your images ({base}). {extra} It can also learn a person's face — use real people only with their consent (or yourself).",
     "v2_duration": "Duration:",
     "v2_until_stop": "Until I stop it",
     "v2_minutes": "Time limit",
@@ -620,6 +620,61 @@ EN = {
     "v2_deep_note_face": "Only the face (with hair) is cut out of each image and learned; background and clothes are barely learned. Images without a detected face are skipped.",
     "v2_face_consent_q": "Face mode learns what a person looks like.\n\nAre these faces yours, people who agreed to it, or fictional characters? Do not use it to imitate real people without their consent.\n\nYes: continue (not asked again for this dataset)",
     "tr_log_face_mode": "👤 Face found and cut out in {n} image(s); {skipped} image(s) without a face were skipped.",
+    "v2_status_collage": "Checking images for collages…",
+    "v2_prog_collage": "Checking layout {a}/{b}",
+    "v2_log_collage_out": "{n} collage-like image(s) removed from the dataset (moved to: {folder})",
+    "v2_log_collage_kept": "{n} collage-like image(s) kept, as you chose.",
+    "v2_log_collage_cancel": "Training was not started.",
+    "desc_custom": "📦 Your own model (single file) — its license is your responsibility",
+    "log_custom_skip": "📦 '{name}' was not added as a model: {why}",
+    "custom_why_unsafe": ".ckpt / .pt files can contain code and are never opened — use the .safetensors version",
+    "custom_why_sd2": "SD 2.x models are not supported",
+    "custom_why_flux": "single-file FLUX models are not supported yet",
+    "custom_why_sd3": "SD 3 models are not supported",
+    "custom_why_refiner": "the SDXL refiner is not a standalone model",
+    "custom_why_inpaint": "inpainting models are not supported",
+    "custom_why_novae": "the file has no VAE (incomplete model)",
+    "custom_why_broken": "the file is damaged or only partly downloaded",
+    "custom_why_unknown": "not recognised as an SD 1.5 / SDXL model",
+    "custom_why_other": "this model type is not supported",
+    "log_custom_misplaced": "📦 '{name}' is a full model, not a LoRA. It works where it is, but its place is: {folder}",
+    "custom_license_q": "You are using a model you added yourself.\n\nThe program cannot check its license: some models do not allow commercial use or have other conditions. Checking the license and how you use the images is your responsibility.\n\nContinue? (not asked again)",
+    "custom_cfg_name": "Settings files for {base} (no model weights)",
+    "log_custom_cfg": "Downloading the small settings files for {base} (structure, scheduler, tokenizer — no weights)…",
+    "log_ram_tight": "ℹ️ The model needs more than the RAM that is free right now — Windows frees cached memory and uses the page file, so loading may take a little longer.",
+    "v2_base": "Model:",
+    "v2_base_any": "4 GB+ or CPU",
+    "v2_base_need": "≥ {gb:.0f} GB VRAM",
+    "v2_base_note_sd15": "The LoRA works with SD 1.5 and your own SD 1.5 models.",
+    "v2_base_note_sdxl": "Trains at 1024 px. The LoRA works with SDXL and your own SDXL models.",
+    "v2_base_note_flux2_klein_4b": "Trains on FLUX.2 [klein] base 4B (downloaded once, ~7.8 GB, Apache-2.0); the LoRA is used with the fast FLUX.2 [klein] 4B.",
+    "v2_base_note_zimage_turbo": "Trains on Z-Image base (downloaded once, ~12.3 GB, Apache-2.0); the LoRA is used with Z-Image-Turbo (raise its weight to 1.2–1.5 if the effect is weak).",
+    "v2_base_vram": "⛔ {name} training needs an NVIDIA card with at least {need:.1f} GB of VRAM (this PC: {have:.1f} GB).",
+    "v2_base_vram_q": "{name} training needs an NVIDIA card with at least {need:.1f} GB of graphics memory; this PC has {have:.1f} GB.\n\nIt would not run here, so it is not started. Choose SD 1.5 (also works on the CPU) — or train on a PC with an NVIDIA card and copy the LoRA file into the loras folder.",
+    "train_base_item": "{name} — for training only (transformer), {lic}",
+    "tr_log_base": "Training model: {base}",
+    "tr_log_oom_res": "⚠️ Not enough graphics memory — trying again at {res} px…",
+    "tr_log_oom_final": "❌ Not enough graphics memory even at the lowest resolution. Close other programs that use the GPU (games, video in the browser) or choose a smaller training model.",
+    "v2_base_swap": "RAM-assisted, slow",
+    "v2_base_swap_note": "🐢 Your card has {have:.1f} GB (full speed needs {need:.0f} GB): the model stays in RAM and is moved to the card piece by piece — it works, but training is several times slower.",
+    "v2_base_ram": "⛔ {name} training needs at least {need:.0f} GB of RAM (this PC: {have:.0f} GB).",
+    "tr_log_swap": "🐢 RAM-assisted training: {gpu:.1f} GB of the model stays on the graphics card, {ram:.1f} GB is moved from RAM at every step (slower, but it fits).",
+    "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
+    "v2_status_stopping": "Stopping — saving the latest state…",
+    "tr_log_stopping": "⏹ Stopping: the current step is cancelled, the LoRA is saved as it is (no sample image)…",
+    "v2_collage_q2": "{n} image(s) look like a collage or split screen (several pictures in one image). The model would learn this layout too and start drawing split images.\n\nThe red frames show where the program would cut. ✂ Cut turns every frame into a separate image ({new} new images in total) — one picture becomes several training images.",
+    "v2_collage_panels": "✂ {n} frames",
+    "v2_collage_nosplit": "can't be cut",
+    "v2_collage_more": "…and {n} more",
+    "v2_collage_btn_split": "✂ Cut into separate images ({new})",
+    "v2_collage_btn_out": "Remove",
+    "v2_collage_btn_keep": "Keep",
+    "v2_collage_btn_cancel": "Don't start training",
+    "v2_collage_note": "Originals are never deleted: cut and removed images are moved to the dataset's 'excluded' folder. Images that can't be cut are removed. Frames smaller than the 'skip smaller images' size are dropped. 'Keep': you won't be asked about these again.",
+    "v2_status_collage_split": "Cutting collages into frames…",
+    "v2_log_collage_split": "✂ {n} collage(s) cut into {new} separate images (originals moved to: {folder})",
+    "v2_log_collage_split_failed": "{n} collage(s) could not be cut and were removed from the dataset.",
+    "log_custom_missing": "The model file is no longer there: {path}",
 }
 
 
@@ -738,6 +793,10 @@ V2_DEFAULTS = {
 
 def load_settings(paths):
     s = dict(DEFAULT_SETTINGS)
+    try:
+        core.refresh_custom_models(paths)        # kayıtlı seçim kullanıcının modeli olabilir
+    except Exception:
+        pass
     data, from_new = None, False
     for p, is_new in ((paths.settings, True), (os.path.join(APP_DIR, "settings.json"), False)):
         try:
@@ -775,7 +834,7 @@ def load_settings(paths):
         v2.update({k: v for k, v in s["v2"].items() if k in V2_DEFAULTS})
     if v2.get("mode") not in ("light", "deep", "self"):
         v2["mode"] = "light"
-    if v2.get("base_model") not in core.IMAGE_MODEL_BY_KEY:
+    if v2.get("base_model") not in core.TRAIN_BASES:
         v2["base_model"] = "sd15"
     if v2.get("duration") not in ("until_stop", "minutes"):
         v2["duration"] = "until_stop"
@@ -1611,10 +1670,19 @@ class StyleStudioWindow:
             tk.Label(b, text=t(key), bg=BG, fg=TXT, font=f.b9, anchor="w").grid(row=row, column=0, sticky="w",
                                                                               pady=3, padx=(0, 8))
         lab(0, "v2_mode")
-        kc = KeyCombo(b, self.v_mode, lambda: [("light", t("v2_mode_light")), ("deep", t("v2_mode_deep")),
-                                               ("self", t("v2_mode_self"))], width=34)
-        kc.cb.grid(row=0, column=1, sticky="w")
+        mf = tk.Frame(b, bg=BG)
+        mf.grid(row=0, column=1, sticky="w")
+        kc = KeyCombo(mf, self.v_mode, lambda: [("light", t("v2_mode_light")), ("deep", t("v2_mode_deep")),
+                                                ("self", t("v2_mode_self"))], width=30)
+        kc.cb.pack(side="top", anchor="w")
         self.combos.append(kc)
+        bf = tk.Frame(mf, bg=BG)
+        bf.pack(side="top", anchor="w", pady=(3, 0))
+        self.lbl_base = tk.Label(bf, text=t("v2_base"), bg=BG, fg=TXT, font=f.b9)
+        self.lbl_base.pack(side="left", padx=(0, 4))
+        self.kc_base = KeyCombo(bf, self.v_base, self._base_items, width=34)
+        self.kc_base.cb.pack(side="left")
+        self.combos.append(self.kc_base)
         self.lbl_mode = self._note(b, wrap=560)
         self.lbl_mode.grid(row=1, column=1, sticky="w")
         lab(2, "v2_captions")
@@ -1687,7 +1755,7 @@ class StyleStudioWindow:
 
         btns = tk.Frame(w, bg=BG)
         btns.pack(fill="x", padx=16, pady=10)
-        self.b_stop = ttk.Button(btns, text=t("v2_stop"), command=self.app.abort.set)
+        self.b_stop = ttk.Button(btns, text=t("v2_stop"), command=self.on_stop)
         self.b_stop.pack(side="left")
         ttk.Button(btns, text=t("adv_close"), command=self.close).pack(side="right")
 
@@ -1751,6 +1819,32 @@ class StyleStudioWindow:
                 self.app.log(t("v2_log_learn", name=data.get("name", slug), kind=t("learn_" + learn)))
         self.update_state()
 
+    def on_stop(self):
+        """Durdur: iş hemen haber alır; eğitimde son durum kaydedilip çıkılır."""
+        if self.app.running() and not self.app.abort.is_set():
+            self.app.abort.set()
+            self.app.status("v2_status_stopping")
+            self.app.log(t("tr_log_stopping"))
+
+    def _base_items(self):
+        """Eğitim modelleri: ad, gereken VRAM ve bu bilgisayarda çalışıp çalışmayacağı."""
+        out = []
+        for k in core.TRAIN_BASES:
+            m = core.IMAGE_MODEL_BY_KEY[k]
+            sp = core.TRAIN_SPECS[k]
+            ok, why = core.train_ready(self.app.hw, k)
+            if sp["cpu_ok"]:
+                need = t("v2_base_any")
+            elif why == "swap":
+                need = t("v2_base_swap")
+            elif why == "ram":
+                need = t("v2_base_need_ram", gb=sp["ram"])
+            else:
+                need = t("v2_base_need", gb=sp["vram"])
+            icon = "🐢" if why == "swap" else ("✔" if ok else "⛔")
+            out.append((k, f"{icon} {m['name']}  ({need})"))
+        return out
+
     def update_state(self):
         if not self.alive():
             return
@@ -1777,15 +1871,32 @@ class StyleStudioWindow:
         learn = core.norm_learn(self.v_learn.get())
         what = t("learn_what_" + learn)
         gpu = core.train_device(hw) != "cpu"
+        base = self.v_base.get() if self.v_base.get() in core.TRAIN_BASES else "sd15"
+        base_ok, base_why = core.train_ready(hw, base)
         if mode == "deep":
-            self.lbl_mode.config(text=t("v2_mode_deep_info", what=what, extra=t("v2_deep_note_" + learn)) + "  " +
-                                 (t("fit_ok") if gpu else t("fit_slow")), fg=GREEN if gpu else WARN)
+            if base != "sd15":
+                gpu = base_ok
+            note = t("v2_base_note_" + base)
+            if base_why == "swap":
+                note += "  " + t("v2_base_swap_note", need=core.TRAIN_SPECS[base]["vram"], have=hw.vram_gb)
+            elif base_why == "ram":
+                note += "  " + t("v2_base_ram", name=core.IMAGE_MODEL_BY_KEY[base]["name"],
+                                 need=core.TRAIN_SPECS[base]["ram"], have=hw.ram_total_gb)
+            elif not base_ok:
+                note += "  " + t("v2_base_vram", name=core.IMAGE_MODEL_BY_KEY[base]["name"],
+                                 need=core.SWAP_MIN_VRAM, have=hw.vram_gb if hw.cuda_usable else 0.0)
+            self.lbl_mode.config(text=t("v2_mode_deep_info", what=what, extra=t("v2_deep_note_" + learn),
+                                        base=core.IMAGE_MODEL_BY_KEY[base]["name"]) + "  " + note + "  " +
+                                 ((t("fit_slow") if base_why == "swap" else t("fit_ok")) if gpu
+                                  else (t("fit_slow") if base == "sd15" else "")),
+                                 fg=(WARN if base_why == "swap" else GREEN) if gpu else (WARN if base == "sd15" else RED))
         elif mode == "self":
             self.lbl_mode.config(text=t("v2_mode_self_info") + "  " + (t("fit_ok") if gpu else t("fit_slow")),
                                  fg=GREEN if gpu else WARN)
         else:
             self.lbl_mode.config(text=t("v2_mode_light_info", what=what) + "  " + t("fit_ok"), fg=GREEN)
         self.kc_learn.cb.config(state="disabled" if busy else "readonly")
+        self.kc_base.cb.config(state="readonly" if (mode == "deep" and not busy) else "disabled")
         self.chk_hide.config(state="normal" if (learn == "place" and mode == "deep" and not busy) else "disabled")
         self.chk_judge.config(state="normal" if mode == "self" else "disabled")
         self.b_caption.state(["!disabled"] if (has_ds and not busy) else ["disabled"])
@@ -2112,6 +2223,18 @@ class StyleStudioWindow:
         if need_cap and not self.app.captioner_ok(parent=self.w):
             need_cap = False
         train = mode in ("deep", "self")
+        base = self.v_base.get() if (mode == "deep" and self.v_base.get() in core.TRAIN_BASES) else "sd15"
+        ready, why = core.train_ready(self.app.hw, base) if mode == "deep" else (True, "")
+        if not ready:
+            hw = self.app.hw
+            if why == "ram":
+                txt = t("v2_base_ram", name=core.IMAGE_MODEL_BY_KEY[base]["name"], need=core.TRAIN_SPECS[base]["ram"],
+                        have=hw.ram_total_gb)
+            else:
+                txt = t("v2_base_vram_q", name=core.IMAGE_MODEL_BY_KEY[base]["name"], need=core.SWAP_MIN_VRAM,
+                        have=hw.vram_gb if hw.cuda_usable else 0.0)
+            messagebox.showinfo(APP_NAME, txt, parent=self.w)
+            return
         if mode == "deep" and learn == "face" and not data.get("face_ok"):
             # Yüz modu bir kişinin görünüşünü öğrenir: veri seti başına bir kez izin sorulur.
             if not messagebox.askyesno(APP_NAME, t("v2_face_consent_q"), parent=self.w):
@@ -2121,15 +2244,17 @@ class StyleStudioWindow:
         # Mekân (yüzleri gizlemek) ve Yüz (yüzü bulmak) için yüz algılayıcı (Yüz ve El Düzeltici ile aynı, ~50 MB)
         hide = mode == "deep" and learn == "place" and self.v2.get("hide_faces", True)
         need_det = hide or (mode == "deep" and learn == "face")
-        plan = self.app._plan(engine=True, model=core.IMAGE_MODEL_BY_KEY["sd15"] if train else None,
-                              peft=train, captioner=need_cap, detailer=need_det)
+        plan = self.app._plan(engine=True, model=core.IMAGE_MODEL_BY_KEY[base] if train else None,
+                              peft=train, captioner=need_cap, detailer=need_det,
+                              train_base=base if mode == "deep" else None)
         if plan is None:
             return
         opts = {"minutes": self.v2["minutes"] if self.v2["duration"] == "minutes" else None,
                 "checkpoint": self.v2["checkpoint"], "sample": self.v2["sample_each"], "judge": self.v2["auto_judge"],
                 "caption": need_cap, "tag": (data or {}).get("tag") or (data or {}).get("name") or slug,
                 "llm": (self.app.v_llm_host.get(), self.app.v_llm.get()), "outdir": self.app.v_outdir.get(),
-                "hide_faces": hide, "need_detector": need_det}
+                "hide_faces": hide, "need_detector": need_det, "base": base, "autocap": bool(self.v_autocap.get()),
+                "learn": learn}
         self.app.start_job("analysis", self.job_analysis, mode, slug, plan, opts)
         self.update_state()
 
@@ -2138,9 +2263,14 @@ class StyleStudioWindow:
         app = self.app
         m15 = core.IMAGE_MODEL_BY_KEY["sd15"]
         if mode in ("light", "deep"):
-            if not self._collage_check(slug, can_cancel=True):
+            cc = self._collage_check(slug, can_cancel=True)
+            if cc == "cancel":
                 app.status("status_done")
                 return
+            # kolajdan kesilen yeni karelerin açıklaması yok: otomatik okuma açıksa ve okuyucu kuruluysa okunur
+            if cc == "split" and opts.get("autocap") and not (mode == "deep" and opts.get("learn") == "face") \
+                    and core.is_captioner_installed(app.paths.models):
+                opts["caption"] = True
             if not (core.load_dataset(self.paths, slug) or {}).get("items"):
                 app.log(t("v2_start_empty"))
                 app.status("status_done")
@@ -2149,11 +2279,22 @@ class StyleStudioWindow:
             if not plan.get("engine"):
                 raise JobFail()
             app._install_engine()
+        base = opts.get("base") or "sd15"
         if mode in ("deep", "self"):
-            if not core.is_image_model_installed(app.paths.models, m15):
+            mb = core.IMAGE_MODEL_BY_KEY[base] if mode == "deep" else m15
+            if not core.is_image_model_installed(app.paths.models, mb):
                 if not plan.get("model"):
                     raise JobFail()
-                app._download_image_model(m15)
+                app._download_image_model(mb)
+            if mode == "deep" and not core.is_train_base_installed(app.paths.models, base):
+                if not plan.get("train_base"):
+                    raise JobFail()
+                sp = core.TRAIN_SPECS[base]
+                app.status("status_download")
+                app.log(t("log_download_start", name=sp["base_name"], size=f"~{sp['base_gb']:.1f} GB",
+                          path=core.train_base_dir(app.paths.models, base)))
+                core.download_train_base(app.paths.models, base, app.bytes_progress, app.abort)
+                app.log(t("log_download_done", name=sp["base_name"]))
             if not app._ensure_peft(plan):
                 raise JobFail()
         want_cap = mode == "caption" or opts.get("caption")
@@ -2181,7 +2322,8 @@ class StyleStudioWindow:
                 app.status("status_install")
                 core.install_detector(app.paths, app.log, t, app.bytes_progress, app.abort)
             self._train(core.run_style_training, slug=slug, tag=opts["tag"], minutes=opts["minutes"],
-                        checkpoint_min=opts["checkpoint"], sample_each=opts["sample"], hide_faces=hide)
+                        checkpoint_min=opts["checkpoint"], sample_each=opts["sample"], hide_faces=hide,
+                        model_key=base)
         else:
             pool = core.collect_prompt_pool(app.paths, opts["outdir"])
             self._train(core.run_preference_training, minutes=opts["minutes"], checkpoint_min=opts["checkpoint"],
@@ -2252,13 +2394,29 @@ class StyleStudioWindow:
         app = self.app
         app.status("v2_status_train")
 
-        def prog(frac, steps, elapsed):
+        live = {"steps": 0, "elapsed": 0.0, "at": time.time(), "frac": None, "on": True}
+
+        def show(frac, steps, elapsed):
             txt = t("tr_counter", steps=steps, time=fmt_duration(elapsed))
             if frac is None:
                 app.post(app.set_indeterminate, txt)
             else:
                 app.progress(frac * 100.0, txt)
             app.post(self.set_progress, frac or 0.0, 1, txt)
+
+        def prog(frac, steps, elapsed):
+            live.update(steps=steps, elapsed=elapsed, at=time.time(), frac=frac)
+            show(frac, steps, elapsed)
+
+        def tick():
+            # adımlar uzun sürse de (RAM destekli eğitim) süre sayacı her saniye ilerler
+            if not live["on"]:
+                return
+            if not app.abort.is_set():
+                el = live["elapsed"] + (time.time() - live["at"])
+                show(live["frac"], live["steps"], el)
+            app.r.after(1000, tick)
+        app.post(lambda: app.r.after(1000, tick))
 
         def on_sample(path, info):
             meta = {"model": "LoRA: %s" % info.get("name", ""), "stage": "sample", "steps": info.get("steps"),
@@ -2268,7 +2426,18 @@ class StyleStudioWindow:
 
         info = None
         wd = core.RamWatchdog(app.abort, app.hw.ram_total_gb)
-        for res in (None, 384):
+        base = kw.get("model_key") or "sd15"
+        tries = (None,) + tuple(core.TRAIN_SPECS[base]["fallback"])
+        try:
+            info = self._train_loop(fn, kw, tries, wd, prog, on_sample)
+        finally:
+            live["on"] = False
+        self._train_done(info, wd)
+
+    def _train_loop(self, fn, kw, tries, wd, prog, on_sample):
+        app = self.app
+        info = None
+        for n_try, res in enumerate(tries):
             try:
                 with wd:
                     info = fn(app.paths, app.hw, log_cb=app.log, msg=t, progress_cb=prog, abort_event=app.abort,
@@ -2277,17 +2446,29 @@ class StyleStudioWindow:
             except core.NothingToTrainError:
                 app.log(t("tr_log_nothing"))
                 raise JobFail()
+            except core.TrainVramError as e:
+                key, _need, have = e.args[0]
+                app.log(t("v2_base_vram", name=core.IMAGE_MODEL_BY_KEY[key]["name"], need=core.SWAP_MIN_VRAM, have=have))
+                raise JobFail()
             except core.AbortedError:
                 if wd.triggered:
                     app.log(t("log_ram_guard", free=wd.free_at_trigger))
                     raise core.AbortedError("ram")
                 raise
             except Exception as e:
-                if res is None and core.is_oom_error(e):
+                if n_try + 1 < len(tries) and core.is_oom_error(e):
                     core.free_gpu_memory()
-                    app.log(t("tr_log_oom"))
+                    app.log(t("tr_log_oom_res", res=tries[n_try + 1]))
                     continue
+                if core.is_oom_error(e):
+                    core.free_gpu_memory()
+                    app.log(t("tr_log_oom_final"))
+                    raise JobFail()
                 raise
+        return info
+
+    def _train_done(self, info, wd):
+        app = self.app
         if wd.triggered:
             app.log(t("log_ram_guard", free=wd.free_at_trigger))
         app.log(t("tr_log_done", name=info.get("name", ""), steps=info.get("steps", 0), path=info.get("path", "")))
@@ -2378,18 +2559,77 @@ class StyleStudioWindow:
         parent = self.w if self.alive() else self.app.r
         return messagebox.askyesno(APP_NAME, t("v2_videos_q", n=n, gb=size_gb, k=k), parent=parent)
 
-    def _ask_collage(self, names, can_cancel):
+    def _ask_collage(self, previews, n_total, n_new, can_cancel):
+        """
+        Kolaj penceresi: küçük önizlemeler (kırmızı çerçeveler = kesilecek kareler) ve dört seçenek.
+        Dönüş: 'split' | 'exclude' | 'keep' | None (eğitimi başlatma).
+        """
         parent = self.w if self.alive() else self.app.r
-        shown = "\n".join("• " + x for x in names[:8]) + ("\n• …" if len(names) > 8 else "")
-        text = t("v2_collage_q", n=len(names), names=shown)
+        from PIL import ImageTk
+        f = self.f
+        dlg = tk.Toplevel(parent)
+        dlg.title(APP_NAME)
+        dlg.configure(bg=CARD_BG)
+        dlg.transient(parent)
+        result = {"v": None if can_cancel else "keep"}
+        tk.Label(dlg, text=t("v2_collage_q2", n=n_total, new=n_new), bg=CARD_BG, fg=TXT, font=f.n10, justify="left",
+                 wraplength=760, anchor="w").pack(fill="x", padx=14, pady=(12, 8))
+        grid = tk.Frame(dlg, bg=CARD_BG)
+        grid.pack(padx=14, pady=4)
+        dlg._imgs = []
+        for i, (name, th, k) in enumerate(previews):
+            cell = tk.Frame(grid, bg=CARD_BG)
+            cell.grid(row=i // 4, column=i % 4, padx=4, pady=4, sticky="n")
+            ph = ImageTk.PhotoImage(th)
+            dlg._imgs.append(ph)
+            tk.Label(cell, image=ph, bg=CANVAS_BG).pack()
+            tk.Label(cell, text=(name if len(name) <= 26 else name[:24] + "…"), bg=CARD_BG, fg=LBL,
+                     font=f.n9).pack()
+            tk.Label(cell, text=t("v2_collage_panels", n=k) if k >= 1 else t("v2_collage_nosplit"), bg=CARD_BG,
+                     fg=GREEN if k >= 1 else WARN, font=f.b9).pack()
+        if n_total > len(previews):
+            tk.Label(dlg, text=t("v2_collage_more", n=n_total - len(previews)), bg=CARD_BG, fg=LBL,
+                     font=f.n9).pack(anchor="w", padx=14)
+        btns = tk.Frame(dlg, bg=CARD_BG)
+        btns.pack(fill="x", padx=14, pady=12)
+
+        def choose(v):
+            result["v"] = v
+            dlg.destroy()
+
+        b_split = tk.Button(btns, text=t("v2_collage_btn_split", new=n_new), bg=GREEN, fg="#000000", font=f.b11,
+                            activebackground="#33ff99", activeforeground="#000000", relief="flat", cursor="hand2",
+                            command=lambda: choose("split"))
+        b_split.pack(side="left", fill="x", expand=True, ipady=5)
+        if n_new < 1:
+            b_split.config(state="disabled", bg=BTN)
+        tk.Button(btns, text=t("v2_collage_btn_out"), bg=ORANGE, fg="white", font=f.b10, relief="flat", cursor="hand2",
+                  command=lambda: choose("exclude")).pack(side="left", padx=(8, 0), ipady=5, ipadx=10)
+        tk.Button(btns, text=t("v2_collage_btn_keep"), bg=BTN, fg=TXT, font=f.b10, relief="flat", cursor="hand2",
+                  command=lambda: choose("keep")).pack(side="left", padx=(8, 0), ipady=5, ipadx=10)
         if can_cancel:
-            return messagebox.askyesnocancel(APP_NAME, text + "\n" + t("v2_collage_cancel"), parent=parent)
-        return messagebox.askyesno(APP_NAME, text, parent=parent)
+            tk.Button(btns, text=t("v2_collage_btn_cancel"), bg=RED, fg="white", font=f.b10, relief="flat",
+                      cursor="hand2", command=lambda: choose(None)).pack(side="left", padx=(8, 0), ipady=5, ipadx=10)
+        tk.Label(dlg, text=t("v2_collage_note"), bg=CARD_BG, fg="#888888", font=f.n9, justify="left", wraplength=760,
+                 anchor="w").pack(fill="x", padx=14, pady=(0, 12))
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.update_idletasks()
+        try:
+            x = parent.winfo_rootx() + max(0, (parent.winfo_width() - dlg.winfo_width()) // 2)
+            y = parent.winfo_rooty() + max(0, (parent.winfo_height() - dlg.winfo_height()) // 3)
+            dlg.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+        dlg.grab_set()
+        dlg.focus_set()
+        b_split.focus_set()
+        parent.wait_window(dlg)
+        return result["v"]
 
     def _collage_check(self, slug, can_cancel):
         """
         Kolaj / bölünmüş ekran gibi görünen görselleri bulur ve kullanıcıya sorar (iş thread'inde çalışır).
-        False: kullanıcı eğitimi iptal etti.
+        Dönüş: 'cancel' (eğitim başlatılmasın) | 'split' (kareler eklendi, açıklanmaları gerekir) | 'ok'.
         """
         app = self.app
         app.status("v2_status_collage")
@@ -2399,22 +2639,49 @@ class StyleStudioWindow:
         finally:
             self._finish(None)
         if not found:
-            return True
+            return "ok"
         files = [it.get("file") for it in found]
-        ans = app.call_ui(self._ask_collage, [os.path.basename(f or "") for f in files], can_cancel)
+        previews, n_new = [], 0
+        min_side = max(64, int(self.v2.get("min_side", 256) or 0))
+        for k, it in enumerate(found[:200]):
+            p = core.dataset_item_path(self.paths, slug, it)
+            try:
+                if k < 8:
+                    th, n = core.collage_preview(p, min_side=min_side)
+                    previews.append((os.path.basename(it.get("file") or ""), th, n))
+                else:
+                    from PIL import Image
+                    with Image.open(p) as im:
+                        n = len(core.collage_panels(im.convert("RGB"), min_px=min_side))
+            except Exception:
+                n = 0
+            n_new += n
+        ans = app.call_ui(self._ask_collage, previews, len(files), n_new, can_cancel)
         if ans is None:
             if can_cancel:
                 app.log(t("v2_log_collage_cancel"))
-                return False
-            ans = False
-        if ans:
+                return "cancel"
+            ans = "keep"
+        result = "ok"
+        if ans == "split":
+            app.status("v2_status_collage_split")
+            st = core.split_collage_items(self.paths, slug, files, min_side=self.v2.get("min_side", 256),
+                                          abort_event=app.abort,
+                                          progress_cb=lambda a, b: self._prog(a, b, t("v2_prog_collage", a=a, b=b)))
+            app.log(t("v2_log_collage_split", n=st["split"], new=st["new"],
+                      folder=os.path.join(core._ds_dir(self.paths, slug), core.EXCLUDED_DIR)))
+            if st["failed"]:
+                core.exclude_dataset_items(self.paths, slug, st["failed"])
+                app.log(t("v2_log_collage_split_failed", n=len(st["failed"])))
+            result = "split" if st["new"] else "ok"
+        elif ans == "exclude":
             n = core.exclude_dataset_items(self.paths, slug, files)
             app.log(t("v2_log_collage_out", n=n, folder=os.path.join(core._ds_dir(self.paths, slug), core.EXCLUDED_DIR)))
         else:
             core.keep_dataset_items(self.paths, slug, files)
             app.log(t("v2_log_collage_kept", n=len(files)))
         self._finish(None)
-        return True
+        return result
 
     def _ensure_cv2(self):
         """Videodan kare çıkarmak için OpenCV (programın ortamında). Yoksa onayla kurulur. (İş thread'inde çalışır.)"""
@@ -2575,7 +2842,7 @@ class LoraPickerWindow:
         self.tree.delete(*self.tree.get_children())
         shown = 0
         for it in self.items:
-            comp = core.lora_compat(it["base"], m["key"])
+            comp = core.lora_compat(it["base"], core.model_family(m))
             if flt == "compatible" and comp == "no":
                 continue
             if flt == "own" and not (it["origin"] == "own" and it["kind"] == "lora"):
@@ -2608,7 +2875,7 @@ class LoraPickerWindow:
             shown += 1
         own = sum(1 for i in self.items if i["origin"] == "own")
         note = t("lp_note", own=own, ext=len(self.items) - own, shown=shown)
-        hidden = sum(1 for i in self.items if core.lora_compat(i["base"], m["key"]) == "no")
+        hidden = sum(1 for i in self.items if core.lora_compat(i["base"], core.model_family(m)) == "no")
         if flt == "compatible" and hidden:
             note += "  " + t("lp_hidden", n=hidden)
         if not core.peft_installed(self.paths):
@@ -3123,7 +3390,32 @@ class ImageStudio:
         for m in core.IMAGE_MODELS:
             ok = core.is_image_model_installed(self.paths.models, m)
             out.append((m["key"], f"{'✔' if ok else '⬇'} {m['name']}" + ("" if ok else "  " + t("not_installed"))))
+        try:
+            found, skipped = core.refresh_custom_models(self.paths)
+        except Exception:
+            self._write_file_log(traceback.format_exc())
+            found, skipped = [], []
+        for m in found:
+            out.append((m["key"], f"📦 {m['name']}  [{core.BASE_LABELS.get(m['family'], m['family'])}]"))
+        self._note_custom_models(found, skipped)
         return out
+
+    def _note_custom_models(self, found, skipped):
+        """Kullanıcı modelleriyle ilgili notlar (her dosya için oturumda bir kez): atlananlar ve yanlış klasördekiler."""
+        if not hasattr(self, "txt_log"):          # açılışta log alanı henüz kurulmadı
+            self.r.after(800, lambda: self._note_custom_models(found, skipped))
+            return
+        seen = self.__dict__.setdefault("_custom_noted", set())
+        for name, why in skipped:
+            if ("skip", name) not in seen:
+                seen.add(("skip", name))
+                self.log(t("log_custom_skip", name=name, why=t("custom_why_" + why) if ("custom_why_" + why) in EN
+                           else t("custom_why_unknown")))
+        for m in found:
+            if m.get("misplaced") and ("move", m["key"]) not in seen:
+                seen.add(("move", m["key"]))
+                self.log(t("log_custom_misplaced", name=os.path.basename(m["file"]),
+                           folder=core.custom_models_dir(self.paths)))
 
     def _host_names(self):
         return self.llm_installed.get(self.v_llm_host.get(), [])
@@ -3554,16 +3846,32 @@ class ImageStudio:
 
     # ------------------------------------------------------------- download plan (UI thread)
     def _plan(self, engine=False, model=None, upscaler=False, llm=None, detailer=False, peft=False, captioner=False,
-              cv2=False):
+              cv2=False, train_base=None):
         """Neyin indirileceğini listeler ve TEK bir onay ister. Dönüş: plan sözlüğü ya da None (iptal)."""
         items, plan = [], {}
         if engine and not core.engine_status(self.paths):
             dl, disk = core.ENGINE_SIZE[core.engine_kind(self.hw)]
             items.append((t("engine_name"), t("engine_size", dl=dl, disk=disk), self.paths.runtime))
             plan["engine"] = True
-        if model and not core.is_image_model_installed(self.paths.models, model):
+        if model and model.get("custom"):
+            if not self.st.get("custom_license_ok"):
+                if not messagebox.askyesno(APP_NAME, t("custom_license_q"), parent=self.r):
+                    return None
+                self.st["custom_license_ok"] = True
+                self.save()
+            if not core.custom_config_dir(self.paths.models, model["family"]):
+                base = core.IMAGE_MODEL_BY_KEY[model["family"]]
+                items.append((t("custom_cfg_name", base=base["name"]), core.CONFIG_PACK_SIZE,
+                              os.path.join(self.paths.models, "configs", model["family"])))
+                plan["model_config"] = True
+        elif model and not core.is_image_model_installed(self.paths.models, model):
             items.append((model["name"], f"~{model['size_gb']:.1f} GB", os.path.join(self.paths.models, "image")))
             plan["model"] = True
+        if train_base and not core.is_train_base_installed(self.paths.models, train_base):
+            sp = core.TRAIN_SPECS[train_base]
+            items.append((t("train_base_item", name=sp["base_name"], lic=sp["license"]), f"~{sp['base_gb']:.1f} GB",
+                          core.train_base_dir(self.paths.models, train_base)))
+            plan["train_base"] = True
         if upscaler and not core.is_upscaler_installed(self.paths.models):
             items.append((core.UPSCALER["name"], core.UPSCALER["size"], os.path.join(self.paths.models, "upscale")))
             plan["upscaler"] = True
@@ -3721,11 +4029,11 @@ class ImageStudio:
             if it["kind"] == "card":
                 cards.append(it)
                 continue
-            if core.lora_compat(it["base"], m["key"]) == "no":
+            if core.lora_compat(it["base"], core.model_family(m)) == "no":
                 skipped.append((it["name"], "incompatible"))
                 continue
             specs.append((it["id"], it["path"], float(sel.get("w", 0.8)), it))
-        if self.v_pref_auto.get() and m["key"] == "sd15":
+        if self.v_pref_auto.get() and core.model_family(m) == "sd15":
             pref = os.path.join(core.own_lora_dir(self.paths), core.PREF_LORA_NAME + ".safetensors")
             if os.path.exists(pref) and not any(sp[1] == pref for sp in specs):
                 it = items.get("own:" + core.PREF_LORA_NAME + ".safetensors") or \
@@ -3753,7 +4061,7 @@ class ImageStudio:
             if it["kind"] == "card":
                 parts.append("📝 " + it["name"])
                 continue
-            comp = core.lora_compat(it["base"], m["key"])
+            comp = core.lora_compat(it["base"], core.model_family(m))
             mark = "⚠ " if comp == "no" else (core.learn_icon(it["learn"]) + " " if it.get("learn") else "")
             bad = bad or comp == "no"
             parts.append(f"{mark}{it['name']} ({x['w']:.2f})")
@@ -4035,7 +4343,9 @@ class ImageStudio:
     # ------------------------------------------------------------- generation
     def on_start(self):
         if self.running():
-            self.abort.set()
+            if not self.abort.is_set():
+                self.abort.set()
+                self.status("v2_status_stopping")
             return
         text = self.txt_prompt.get("1.0", "end").strip()
         if not text:
@@ -4161,7 +4471,17 @@ class ImageStudio:
             if not plan.get("engine"):
                 raise JobFail()
             self._install_engine()
-        if not core.is_image_model_installed(self.paths.models, m):
+        if m.get("custom"):
+            if not core.is_image_model_installed(self.paths.models, m):
+                self.log(t("log_custom_missing", path=m["file"]))
+                raise JobFail()
+            if not core.custom_config_dir(self.paths.models, m["family"]):
+                if not plan.get("model_config"):
+                    raise JobFail()
+                self.status("status_download")
+                self.log(t("log_custom_cfg", base=core.IMAGE_MODEL_BY_KEY[m["family"]]["name"]))
+                core.download_model_config(self.paths.models, m["family"], self.bytes_progress, self.abort)
+        elif not core.is_image_model_installed(self.paths.models, m):
             if not plan.get("model"):
                 raise JobFail()
             self._download_image_model(m)
@@ -4247,6 +4567,8 @@ class ImageStudio:
                             self.log(t("log_loading", name=m["name"]))
                             t0 = time.time()
                             self.engine.load(m, path, profile, self.hw)
+                            if self.engine.ram_tight:
+                                self.log(t("log_ram_tight"))
                             self.log(t("log_loaded", sec=time.time() - t0))
                         else:
                             self.engine.unpark()
@@ -4409,7 +4731,8 @@ class ImageStudio:
             a1111 += ", LoRA: " + ", ".join(f"{x['name']}:{x['w']}" for x in meta["loras"])
         info.add_text("parameters", a1111)
         info.add_text("ails", json.dumps(meta, ensure_ascii=False))
-        name = time.strftime("%Y%m%d_%H%M%S") + f"_{m['key']}_{seed}{suffix}.png"
+        tag = core.safe_folder_name(m["name"], "model")[:40] if m.get("custom") else m["key"]
+        name = time.strftime("%Y%m%d_%H%M%S") + f"_{tag}_{seed}{suffix}.png"
         path = os.path.join(outdir, name)
         core.check_space(outdir, 0.05)
         img.save(path, pnginfo=info)
@@ -4841,7 +5164,7 @@ class ImageStudio:
                 lbl_fix.config(text=t("adv_fix_missing", size=core.DETAILER["size"]), fg=WARN)
             chk_neg.config(state="normal" if m["neg"] else "disabled")
             pref = os.path.join(core.own_lora_dir(self.paths), core.PREF_LORA_NAME + ".json")
-            if m["key"] != "sd15":
+            if core.model_family(m) != "sd15":
                 lbl_pref.config(text=t("adv_pref_sd15_only"), fg="#888888")
             elif os.path.exists(pref):
                 try:
@@ -4991,6 +5314,9 @@ class ImageStudio:
             lines.append(f"• {m['name']}  ({m['repo']}) — {m['license']}")
         for m in core.LLM_MODELS:
             lines.append(f"• {m['name']}  (Ollama: {m['key']}) — {m['license']}")
+        for k, sp in core.TRAIN_SPECS.items():
+            if sp.get("base_repo"):
+                lines.append(f"• {sp['base_name']}  ({sp['base_repo']}, training) — {sp['license']}")
         lines.append(f"• {core.UPSCALER['name']} (xinntao/Real-ESRGAN) — {core.UPSCALER['license']}")
         lines.append("• YuNet face detector (opencv/opencv_zoo) — MIT")
         lines.append("• MediaPipe palm detector (opencv/opencv_zoo, Google) — Apache-2.0")
