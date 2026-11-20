@@ -1973,11 +1973,14 @@ class OllamaClient:
     def delete(self, name):
         self._call("DELETE", "/api/delete", 30, json={"model": name})
 
-    def chat_json(self, model, system, user, schema, timeout=(10, 900)):
+    def chat_json(self, model, system, user, schema, timeout=(10, 900), temperature=0.4, max_tokens=None):
+        options = {"temperature": temperature, "num_ctx": 4096}
+        if max_tokens:
+            options["num_predict"] = int(max_tokens)
         payload = {
             "model": model, "stream": False, "format": schema, "think": False,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "options": {"temperature": 0.4, "num_ctx": 4096},
+            "options": options,
         }
         if self.is_local:
             payload["keep_alive"] = 0      # yerelde işi bitince VRAM'i hemen boşalt
@@ -3019,33 +3022,45 @@ def parse_json_loose(text):
     raise ValueError("LLM did not return valid JSON")
 
 
+def llm_word_limit(model, user_text):
+    """Kısa istek → kısa prompt: kullanıcının kelime sayısına göre en fazla kaç kelime yazılabilir."""
+    n = max(1, len((user_text or "").split()))
+    if model["prompt_style"] == "tags":
+        return min(60, max(20, 6 + 4 * n))
+    return min(90, max(25, 10 + 5 * n))
+
+
 def build_llm_request(model, user_text, extra_text, auto_fields):
     """
     LLM için sistem talimatı, kullanıcı mesajı ve JSON şeması üretir.
     auto_fields: LLM'in seçeceği ayarlar kümesi {"aspect","orientation","creativity"}.
+    Kural: kullanıcının yazdığı anlam aynen korunur, uydurma yok, kısa istek kısa prompt.
     """
+    limit = llm_word_limit(model, user_text)
+    n_words = max(1, len((user_text or "").split()))
     if model["prompt_style"] == "tags":
-        style_rule = ("Write it as comma-separated descriptive tags and short phrases: main subject first, then "
-                      "details, setting, art style, lighting, composition, and quality words such as 'highly detailed'. "
-                      "Maximum 60 words.")
+        style_rule = ("Write it as comma-separated tags and short phrases, main subject first. "
+                      f"At most {limit} words.")
     else:
-        style_rule = ("Write it as 2-4 fluent, concrete English sentences describing subject, details, setting, "
-                      "art style, lighting and composition. Maximum 90 words.")
+        style_rule = f"Write it as one or two plain English sentences, main subject first. At most {limit} words."
     if model["neg"]:
-        neg_rule = ("an English comma-separated list of things to avoid (for example: blurry, low quality, "
-                    "deformed hands, extra fingers, watermark, text) plus everything the user wants to avoid. "
-                    "Maximum 30 words.")
+        neg_rule = ("an English comma-separated list of things to avoid: general defects (blurry, low quality, "
+                    "deformed, watermark, text) plus everything the user wants to avoid. Maximum 25 words.")
     else:
         neg_rule = ("an empty string, because this model ignores negative prompts. If the user wants to avoid "
                     "something important, express it positively inside the positive prompt instead.")
     lines = [
-        "You are the prompt engineer inside an image generator app.",
-        "The user describes an image in Turkish, English, Korean or German.",
-        "Return ONLY a JSON object.",
-        "Field \"positive\": the English prompt for the image model. " + style_rule,
-        "Keep every subject, color, count, clothing and detail the user asked for and do not invent new subjects.",
-        "If people or characters are visible, also ask for a detailed face, clear eyes and natural, "
-        "well-proportioned hands with five fingers.",
+        "You turn a short image description into an English prompt for an image model.",
+        "The description can be in any language. Return ONLY a JSON object.",
+        "Field \"positive\": the English prompt. " + style_rule,
+        "RULE 1 - Be faithful: translate exactly what the user wrote. Keep every subject, count, color, clothing, "
+        "age, gender, nationality, ethnicity and place with the same meaning. Never swap a word for a different one.",
+        "RULE 2 - Invent nothing: do not add people, objects, places, nationality, ethnicity, actions, story, mood, "
+        "clothing, colors or background details that the user did not mention. Do not assume any country or "
+        "culture the user did not name.",
+        f"RULE 3 - Short in, short out: the user wrote {n_words} word(s). Besides the translation you may only "
+        "add a few general quality words (for example: photo, natural light, sharp focus, highly detailed).",
+        "If a person is in the image you may add 'detailed face'.",
         "Field \"negative\": " + neg_rule,
         "If the user gave extra instructions, follow them.",
     ]
@@ -3068,9 +3083,37 @@ def build_llm_request(model, user_text, extra_text, auto_fields):
                      "request is short, abstract or artistic.")
     schema = {"type": "object", "properties": props, "required": required}
     user = "Image description:\n" + user_text.strip()
+    must = requested_demonyms(user_text)
+    if must:
+        user += "\n\nThe description says: " + ", ".join(must) + ". Use exactly this word in the prompt."
     if extra_text.strip():
         user += "\n\nExtra instructions / things to avoid:\n" + extra_text.strip()
     return "\n".join(lines), user, schema
+
+
+def llm_too_long(model, user_text, positive):
+    """LLM kısa isteğe uzun prompt yazdıysa (kendinden ayrıntı eklemiş olması çok olası) True."""
+    return len((positive or "").split()) > int(llm_word_limit(model, user_text) * 1.3)
+
+
+def build_llm_cleanup(model, user_text, positive):
+    """İkinci geçiş: prompt'tan kullanıcının söylemediği her şeyi sildirir."""
+    limit = llm_word_limit(model, user_text)
+    system = "\n".join([
+        "You clean up an English image prompt so that it matches the user's description exactly.",
+        "Return ONLY a JSON object with the field \"positive\".",
+        "Delete every detail the description does not mention: places, buildings, objects, clothing, colors, "
+        "actions, poses, mood, time of day, era, culture, nationality, ethnicity.",
+        "Keep the English translation of everything the description says, with the same meaning.",
+        "You may keep a few general quality words (photo, natural light, sharp focus, highly detailed).",
+        f"At most {limit} words. Do not add anything new.",
+    ])
+    user = "Description:\n" + (user_text or "").strip() + "\n\nPrompt to clean:\n" + (positive or "").strip()
+    must = requested_demonyms(user_text)
+    if must:
+        user += "\n\nThe description says: " + ", ".join(must) + ". Keep exactly this word."
+    schema = {"type": "object", "properties": {"positive": {"type": "string"}}, "required": ["positive"]}
+    return system, user, schema
 
 
 def sanitize_llm_result(d, auto_fields):
@@ -3087,6 +3130,185 @@ def sanitize_llm_result(d, auto_fields):
         except Exception:
             out["creativity"] = 5
     return out
+
+
+# --- LLM'in yazdığını kullanıcının isteğine göre denetleme (milliyet/köken, uzunluk) ---
+# (İngilizce karşılık, kullanıcı metninde tam kelime kalıbı (tr|en|de), Korece ülke kökleri, LLM çıktısı kalıbı).
+# Dil / yazı adları (Türkçe, Arapça, arabic…) ve renkle karışan kelimeler (siyah, beyaz) bilerek yok.
+_DEMONYMS = [
+    ("Asian", r"asyal[ıi]\w*|asians?|asiat\w*", ["아시아", "동양"],
+     r"(?:(?:east|south|southeast|south-east|central|west)[ -])?asians?"),
+    ("Turkish", r"türk(ler\w*|ün|e|ü|ten|le|isch\w*|in(nen)?|en)?|turks?|turkish", ["터키", "튀르키예"],
+     r"turks?|turkish"),
+    ("Japanese", r"japon(lar\w*|un|a|u|dan)?|japanese|japan(isch\w*|erin(nen)?|er|ern)", ["일본"], r"japanese"),
+    ("Korean", r"koreli\w*|koreans?|korean(isch\w*|erin(nen)?|er|ern)", ["한국"], r"koreans?"),
+    ("Chinese", r"çinli\w*|chinese|chines(isch\w*|in(nen)?|en?)", ["중국"], r"chinese"),
+    ("Indian", r"hintli\w*|indians?|ind(isch\w*|erin(nen)?|er|ern)", ["인도"], r"indians?"),
+    ("African", r"afrikal[ıi]\w*|africans?|afrikan(isch\w*|erin(nen)?|er|ern)", ["아프리카"], r"africans?"),
+    ("European", r"avrupal[ıi]\w*|europeans?|europä(isch\w*|erin(nen)?|er|ern)", ["유럽"], r"europeans?"),
+    ("Arab", r"arap(lar\w*)?|arabs?|arabian|arab(erin(nen)?|er|ern)", ["아랍"], r"arabs?|arabian"),
+    ("Middle Eastern", r"ortadoğulu\w*|nahöstlich\w*", ["중동"], r"middle[ -]eastern"),
+    ("Latin American", r"latin(ler\w*|li\w*)|latin[ao]s?|hispanics?|lateinamerikan\w*", ["라틴"],
+     r"latin[ao]s?|latinx|hispanics?|latin[ -]american"),
+    ("Russian", r"rus(lar\w*|un|a)?|russians?|russ(isch\w*|in(nen)?|en?)", ["러시아"], r"russians?"),
+    ("American", r"amerikal[ıi]\w*|americans?|amerikan(isch\w*|erin(nen)?|er|ern)", ["미국"], r"americans?"),
+    ("British", r"ingiliz(ler\w*)?|british|englishwom[ae]n|englishm[ae]n|brit(isch\w*|in(nen)?|en?)", ["영국"],
+     r"british|brits?"),
+    ("German", r"alman(lar\w*)?|germans?|deutsch(e|er|en)?", ["독일"], r"germans?"),
+    ("French", r"fransız(lar\w*)?|french|französ(isch\w*|in(nen)?|en?)", ["프랑스"], r"french"),
+    ("Italian", r"italyan(lar\w*)?|italians?|italien(isch\w*|erin(nen)?|er|ern)", ["이탈리아"], r"italians?"),
+    ("Spanish", r"ispanyol(lar\w*)?|spanish|spaniards?|spani(sch\w*|erin(nen)?|er|ern)", ["스페인"], r"spanish|spaniards?"),
+    ("Greek", r"yunanl[ıi]\w*|greeks?|griech(isch\w*|in(nen)?|en?)", ["그리스"], r"greeks?"),
+    ("Mexican", r"meksikal[ıi]\w*|mexicans?|mexikan\w*", ["멕시코"], r"mexicans?"),
+    ("Brazilian", r"brezilyal[ıi]\w*|brazilians?|brasilian\w*", ["브라질"], r"brazilians?"),
+    ("Iranian", r"iranl[ıi]\w*|iranians?|persians?|iran(isch\w*|erin(nen)?|er|ern)", ["이란"],
+     r"iranians?|persians?"),
+    ("Egyptian", r"mısırl[ıi]\w*|egyptians?|ägypt(isch\w*|erin(nen)?|er|ern)", ["이집트"], r"egyptians?"),
+    ("Kurdish", r"kürt(ler\w*)?|kurds?|kurdish|kurd(isch\w*|in(nen)?|en?)", ["쿠르드"], r"kurds?|kurdish"),
+    ("Scandinavian", r"iskandinav\w*|scandinavians?|nordic|skandinav\w*", ["북유럽"], r"scandinavians?|nordic"),
+    ("Thai", r"taylandl[ıi]\w*|thai|thailänd\w*", ["태국"], r"thai"),
+    ("Vietnamese", r"vietnaml[ıi]\w*|vietnamese|vietnames\w*", ["베트남"], r"vietnamese"),
+    ("Filipino", r"filipinli\w*|filipin[oa]s?|philippin\w*", ["필리핀"], r"filipin[oa]s?"),
+    ("Indonesian", r"endonezyal[ıi]\w*|indonesians?|indonesisch\w*", ["인도네시아"], r"indonesians?"),
+    ("Caucasian", r"caucasians?", [], r"caucasians?"),
+]
+_KO_PEOPLE = ("인", " 여", " 남", "계", " 사람", " 소녀", " 소년", " 아이", " 할머니", " 할아버지")
+_PERSON_NOUNS = (r"wom[ae]n|m[ae]n|girls?|boys?|lad(?:y|ies)|persons?|people|child(?:ren)?|kids?|guys?|couples?|"
+                 r"famil(?:y|ies)|teen(?:ager)?s?|models?|warriors?|soldiers?|students?|"
+                 r"grand(?:mother|father|ma|pa)s?|mothers?|fathers?|brides?|grooms?|females?|males?|characters?|"
+                 r"faces?|portraits?|businesswom[ae]n|businessm[ae]n|princess(?:es)?|princes?|queens?|kings?|"
+                 r"elders?|bab(?:y|ies)|toddlers?|actors?|actress(?:es)?|singers?|dancers?|athletes?|workers?|"
+                 r"doctors?|nurses?|chefs?|farmers?|teachers?|monks?|nuns?|samurai|geishas?|ninjas?")
+_DEM_ANY = "|".join("(?:%s)" % out for _n, _i, _k, out in _DEMONYMS)
+_DEM_OUT = [(name, re.compile(r"\b(?:" + out + r")\b", re.I)) for name, _i, _k, out in _DEMONYMS]
+_DEM_IN = [(name, re.compile(r"(?:" + inp + r")", re.I), ko) for name, inp, ko, _o in _DEMONYMS]
+_DEM_PEOPLE = re.compile(
+    r"\b(?P<d>" + _DEM_ANY + r")"
+    r"(?P<mid>(?:[ \-]+(?!(?:and|or|with|in|of|on|at|by|from)\b)(?!(?:" + _DEM_ANY + r")\b)[a-z']+){0,3}?)"
+    r"[ \-]+(?P<n>" + _PERSON_NOUNS + r")\b", re.I)
+_PERSON_RE = re.compile(r"\b(?:" + _PERSON_NOUNS + r")\b", re.I)
+
+
+def _tr_lower(text):
+    return text.replace("I", "ı").replace("İ", "i").lower()
+
+
+def requested_demonyms(text):
+    """Kullanıcının metninde geçen milliyet / köken kelimelerinin İngilizce karşılıkları (metindeki sırayla)."""
+    text = text or ""
+    low = text.lower()
+    words = [(m.start(), m.group(0)) for m in re.finditer(r"[^\W\d_]+", text)]
+    found = []
+    for name, rx, ko in _DEM_IN:
+        pos = [i for i, w in words if rx.fullmatch(w.lower()) or rx.fullmatch(_tr_lower(w))]
+        for k in ko:
+            for suf in _KO_PEOPLE:
+                i = low.find(k + suf)
+                if i >= 0:
+                    pos.append(i)
+        if name == "Middle Eastern":
+            m = re.search(r"\bmiddle[ -]east(ern)?\b", low)
+            if m:
+                pos.append(m.start())
+        if pos:
+            found.append((min(pos), name))
+    return [n for _i, n in sorted(found)]
+
+
+def _demonym_of(word):
+    for name, rx in _DEM_OUT:
+        if rx.fullmatch((word or "").strip()):
+            return name
+    return None
+
+
+def _needs_an(word):
+    w = (word or "").lower()
+    if w.startswith(("eu", "uni", "use", "usu", "uto", "one")):
+        return False
+    if w.startswith(("hour", "honest", "honor", "heir")):
+        return True
+    return w[:1] in ("a", "e", "i", "o", "u")
+
+
+def _fix_article(before, next_word):
+    """Hemen önce 'a' / 'an' varsa sonraki kelimeye uydurur."""
+    m = re.search(r"\b([Aa])n? $", before)
+    if not m or not next_word:
+        return before
+    return before[:m.start()] + m.group(1) + ("n " if _needs_an(next_word) else " ")
+
+
+def _trim_words(text, limit, tags):
+    parts = [p.strip() for p in (text.split(",") if tags else re.split(r"(?<=[.!?])\s+", text)) if p.strip()]
+    out, n = [], 0
+    for p in parts:
+        w = len(p.split())
+        if out and n + w > limit:
+            break
+        out.append(p)
+        n += w
+    return (", " if tags else " ").join(out)
+
+
+def check_llm_prompt(model, user_text, extra_text, res):
+    """
+    LLM'in prompt'unu kullanıcının yazdığına göre denetler:
+      - istenen milliyet/köken başka biriyle değiştirilmişse geri koyar ("Turkish woman" → "Asian woman"),
+      - kişiler için istenmeyen bir milliyet/köken eklenmişse çıkarır, istenen atlanmışsa ekler,
+      - kısa isteğe uzun prompt yazılmışsa kısaltır (ana konu başta olduğu için sondan).
+    Döner: (res, notlar); not = (tür, alanlar), tür: swap | removed | added | trimmed
+    """
+    pos = str(res.get("positive", "")).strip()
+    notes = []
+    if not pos:
+        return res, notes
+    tags = model.get("prompt_style") == "tags"
+    limit = llm_word_limit(model, user_text)
+    n0 = len(pos.split())
+    if n0 > int(limit * 1.3):
+        short = _trim_words(pos, limit, tags)
+        if short and len(short.split()) < n0:
+            notes.append(("trimmed", {"n": n0, "m": len(short.split()), "w": len((user_text or "").split())}))
+            pos = short
+    want = requested_demonyms(user_text)
+    allowed = set(want) | set(requested_demonyms(extra_text))
+    present = {name for name, rx in _DEM_OUT if rx.search(pos)}
+    missing = [w for w in want if w not in present]
+    edits = []                                     # (başlangıç, bitiş, yeni metin)
+    for m in _DEM_PEOPLE.finditer(pos):
+        bad = m.group("d")
+        name = _demonym_of(bad)
+        if name is None or name in allowed:
+            continue
+        if missing:
+            good = missing.pop(0)
+            edits.append((m.start("d"), m.end("d"), good))
+            notes.append(("swap", {"bad": bad, "good": good}))
+        else:
+            end = m.end("d")
+            while end < len(pos) and pos[end] in " -":
+                end += 1
+            edits.append((m.start("d"), end, ""))
+            notes.append(("removed", {"bad": bad}))
+    for start, end, new in reversed(edits):
+        after = pos[end:]
+        nxt = new or (after.split()[0] if after.split() else "")
+        pos = _fix_article(pos[:start], nxt) + new + after
+    for good in missing:                           # istenen ama hiç yazılmamış: ilk kişi kelimesinin önüne
+        target = None
+        for cand in _PERSON_RE.finditer(pos):
+            prev = pos[:cand.start()].rstrip(" -").split()
+            if not prev or _demonym_of(prev[-1]) is None:
+                target = cand
+                break
+        if target is None:
+            continue
+        pos = _fix_article(pos[:target.start()], good) + good + " " + pos[target.start():]
+        notes.append(("added", {"good": good}))
+    res = dict(res)
+    res["positive"] = re.sub(r"[ \t]{2,}", " ", pos).strip()
+    return res, notes
 
 
 # =============================================================================
@@ -3979,7 +4201,7 @@ WEB_MAX_PER_BATCH = 500
 WEB_MAX_MB = 25
 WEB_MIN_DELAY = 1.0
 # Wikimedia vb. sunucular, kim olduğunu ve iletişim adresini söyleyen bir User-Agent ister.
-APP_UA = "AILocalImageStudio/1.4.0 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
+APP_UA = "AILocalImageStudio/1.4.1 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
 
 # Openverse (WordPress): Wikimedia, Flickr, müzeler vb. kaynaklardaki AÇIK LİSANSLI görsellerde arama.
 # Anahtarsız kullanım sınırları (Openverse kaynak kodundaki varsayılanlar): sayfa başına en fazla 20 sonuç,

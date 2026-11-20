@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 
 def _app_dir():
@@ -257,6 +257,11 @@ EN = {
     "log_llm_prompt": "AI prompt → {p}",
     "log_llm_neg": "AI negative → {n}",
     "log_llm_settings": "AI settings → {s}",
+    "log_llm_cleaned": "🧹 The AI added details you didn't ask for ({n} words) — cleaned up ({m} words).",
+    "log_llm_swap": "🛠 The AI wrote '{bad}' instead of '{good}' — corrected.",
+    "log_llm_removed": "🛠 The AI added '{bad}', which you didn't ask for — removed.",
+    "log_llm_added": "🛠 The AI left out '{good}' — added back.",
+    "log_llm_trimmed": "✂ The AI wrote too much ({n} words for your {w}) — shortened to {m} words.",
     "log_llm_fail": "⚠️ AI prompt preparation failed — using the prompt as written. ({err})",
     "log_llm_unloaded": "Local Ollama models unloaded from VRAM: {names}",
     "log_profile": "Memory profile: {profile} ({desc})",
@@ -5136,10 +5141,28 @@ class ImageStudio:
                         self.engine.park()
                     system, user, schema = core.build_llm_request(m, p["text"], p["extra"], auto_fields)
                     self.status("status_llm")
-                    raw = c.chat_json(p["llm"], system, user, schema)
+                    raw = c.chat_json(p["llm"], system, user, schema, temperature=0.2, max_tokens=600)
                     res = core.sanitize_llm_result(raw, auto_fields)
                     if not res["positive"]:
                         raise ValueError("empty prompt")
+                    if core.llm_too_long(m, p["text"], res["positive"]):
+                        # kısa isteğe destan yazdı: kendi eklediklerini sildir (olmazsa aşağıda kısaltılır)
+                        try:
+                            s2, u2, sc2 = core.build_llm_cleanup(m, p["text"], res["positive"])
+                            self.status("status_llm")
+                            raw2 = c.chat_json(p["llm"], s2, u2, sc2, temperature=0.1, max_tokens=400)
+                            cleaned = str(raw2.get("positive", "")).strip() if isinstance(raw2, dict) else ""
+                            if cleaned and len(cleaned.split()) < len(res["positive"].split()):
+                                self.log(t("log_llm_cleaned", n=len(res["positive"].split()),
+                                           m=len(cleaned.split())))
+                                res["positive"] = cleaned
+                        except core.AbortedError:
+                            raise
+                        except Exception as e:
+                            self._write_file_log("LLM cleanup failed: %s" % e)
+                    res, notes = core.check_llm_prompt(m, p["text"], p["extra"], res)
+                    for kind, info in notes:
+                        self.log(t("log_llm_" + kind, **info))
                     self.log(t("log_llm_prompt", p=res["positive"]))
                     if m["neg"] and res["negative"]:
                         self.log(t("log_llm_neg", n=res["negative"]))
