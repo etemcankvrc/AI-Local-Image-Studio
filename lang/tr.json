@@ -202,7 +202,7 @@
   "log_oom": "⚠️ VRAM yetmedi → {profile} profiline geçilip tekrar deneniyor.",
   "log_oom_final": "❌ En düşük profilde bile bellek yetmedi. Daha küçük bir model ya da düşük çözünürlük deneyin.",
   "log_ram_guard": "⛔ Bellek Koruyucu: boş RAM {free:.1f} GB'a düştü — sistemi korumak için iş güvenle durduruldu.",
-  "err_ram": "❌ Bu model için yeterli boş RAM yok: ~{need:.1f} GB gerekli, boş {avail:.1f} GB (Windows için pay bırakılıyor). Diğer programları kapatın ya da daha küçük bir model seçin.",
+  "err_ram": "❌ Bu model için yeterli bellek yok: ~{need:.1f} GB gerekli, Windows sayfa dosyasıyla birlikte bile ancak {avail:.1f} GB kullanılabiliyor. Diğer programları kapatın, sayfa dosyasını büyütün ('Sistem tarafından yönetilen boyut') ya da daha küçük bir model seçin.",
   "log_download_start": "{name} indiriliyor ({size}) → {path}",
   "log_download_done": "✅ {name} indirildi.",
   "log_deleted": "🗑️ {name} silindi.",
@@ -574,5 +574,6 @@
   "custom_license_q": "Kendi eklediğin bir modeli kullanıyorsun.\n\nProgram bu modelin lisansını kontrol edemez: bazı modeller ticari kullanıma kapalıdır ya da başka koşulları vardır. Lisansı ve görselleri nasıl kullandığını kontrol etmek senin sorumluluğunda.\n\nDevam edilsin mi? (bir daha sorulmaz)",
   "custom_cfg_name": "{base} ayar dosyaları (model ağırlığı yok)",
   "log_custom_cfg": "{base} için küçük ayar dosyaları indiriliyor (yapı, zamanlayıcı, sözlük — ağırlık yok)…",
-  "log_custom_missing": "Model dosyası artık yerinde değil: {path}"
+  "log_custom_missing": "Model dosyası artık yerinde değil: {path}",
+  "log_ram_tight": "ℹ️ Model şu an boş olan RAM'den fazlasını istiyor — Windows önbellekteki belleği boşaltıp sayfa dosyasını kullanır, yükleme biraz daha uzun sürebilir."
 }

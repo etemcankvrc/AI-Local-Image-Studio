@@ -202,7 +202,7 @@
   "log_oom": "⚠️ VRAM reichte nicht → Wechsel zu {profile} und neuer Versuch.",
   "log_oom_final": "❌ Selbst im niedrigsten Profil reicht der Speicher nicht. Versuchen Sie ein kleineres Modell oder eine niedrigere Auflösung.",
   "log_ram_guard": "⛔ Speicherschutz: freier RAM fiel auf {free:.1f} GB — der Auftrag wurde zum Schutz des Systems sicher gestoppt.",
-  "err_ram": "❌ Nicht genug freier RAM für dieses Modell: benötigt ~{need:.1f} GB, frei {avail:.1f} GB (eine Reserve für Windows bleibt frei). Andere Programme schließen oder ein kleineres Modell wählen.",
+  "err_ram": "❌ Nicht genug Speicher für dieses Modell: ~{need:.1f} GB nötig, selbst mit der Windows-Auslagerungsdatei sind nur {avail:.1f} GB verfügbar. Schließe andere Programme, vergrößere die Auslagerungsdatei ('Größe wird vom System verwaltet') oder wähle ein kleineres Modell.",
   "log_download_start": "{name} wird heruntergeladen ({size}) → {path}",
   "log_download_done": "✅ {name} heruntergeladen.",
   "log_deleted": "🗑️ {name} gelöscht.",
@@ -574,5 +574,6 @@
   "custom_license_q": "Du verwendest ein selbst hinzugefügtes Modell.\n\nDas Programm kann seine Lizenz nicht prüfen: Manche Modelle erlauben keine kommerzielle Nutzung oder haben andere Bedingungen. Die Lizenz und die Nutzung der Bilder zu prüfen, liegt in deiner Verantwortung.\n\nFortfahren? (wird nicht erneut gefragt)",
   "custom_cfg_name": "Einstellungsdateien für {base} (keine Modellgewichte)",
   "log_custom_cfg": "Kleine Einstellungsdateien für {base} werden geladen (Aufbau, Scheduler, Tokenizer — keine Gewichte)…",
-  "log_custom_missing": "Die Modelldatei ist nicht mehr vorhanden: {path}"
+  "log_custom_missing": "Die Modelldatei ist nicht mehr vorhanden: {path}",
+  "log_ram_tight": "ℹ️ Das Modell braucht mehr als den gerade freien RAM — Windows gibt zwischengespeicherten Speicher frei und nutzt die Auslagerungsdatei, das Laden kann etwas länger dauern."
 }

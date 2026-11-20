@@ -446,9 +446,34 @@ def pagefile_gb():
         return -1.0
 
 
+def pagefile_free_gb():
+    """Sayfa dosyasında (Windows) / takas alanında boş yer. Bilinmiyorsa -1."""
+    try:
+        import psutil
+        sw = psutil.swap_memory()
+        return sw.free / GB if sw.total > 0 else 0.0
+    except Exception:
+        return -1.0
+
+
 def ram_reserve_gb(total_gb):
-    """Windows ve diğer programlar için her zaman boş bırakılan RAM (toplamın %20'si, en az 3 GB)."""
-    return max(3.0, total_gb * 0.20)
+    """
+    Eski sürümlerde Windows için toplam RAM'in %20'si sabit pay olarak ayrılıyordu; bu, RAM boşken bile büyük
+    modelleri engelliyordu. Windows bekleyen/önbellek belleği kendisi boşaltır ve gerekirse sayfa dosyasını
+    kullanır. Artık yalnızca küçük bir güvenlik payı kalır.
+    """
+    return 1.0
+
+
+def ram_can_load(need_gb, total_gb=None):
+    """
+    (yüklenebilir_mi, kullanılabilir_GB, sıkışık_mı). Sınır: boş RAM + sayfa dosyasındaki boş yer (Windows'un
+    gerçekten verebileceği bellek). Boş RAM'den fazlası gerekiyorsa yine yüklenir; Windows yer açar ('sıkışık').
+    """
+    avail = ram_available_gb()
+    pf = pagefile_free_gb()
+    usable = avail + max(0.0, pf) - ram_reserve_gb(total_gb or 0)
+    return need_gb <= usable, max(0.0, usable), need_gb > avail
 
 
 def detect_hardware():
@@ -508,7 +533,7 @@ def model_ram_need_gb(model, profile, disk_gb=None):
 
 def fit_level(model, hw):
     """'ok' | 'slow' | 'no' — model listesinde gösterilen uygunluk etiketi."""
-    if model_ram_need_gb(model, "normal") > hw.ram_total_gb - ram_reserve_gb(hw.ram_total_gb):
+    if model_ram_need_gb(model, "normal") > hw.ram_total_gb + max(0.0, hw.pagefile_gb) - ram_reserve_gb(hw.ram_total_gb):
         return "no"
     prof = auto_profile(model, hw)
     if prof in ("full", "normal"):
@@ -521,9 +546,10 @@ def fit_level(model, hw):
 class RamWatchdog:
     """İş sürerken RAM'i izler; kritik seviyeye inerse işi güvenle durdurur (sistem donmasın diye)."""
 
-    def __init__(self, abort_event, total_gb, on_trigger=None, interval=1.0):
+    def __init__(self, abort_event, total_gb, on_trigger=None, interval=1.0, confirm=3):
         self.abort_event = abort_event
         self.limit_gb = max(1.0, min(2.0, total_gb * 0.05))
+        self.confirm = max(1, int(confirm))      # art arda bu kadar ölçümde düşük kalırsa (anlık düşüşler sayılmaz)
         self.on_trigger = on_trigger
         self.interval = interval
         self.triggered = False
@@ -539,10 +565,25 @@ class RamWatchdog:
     def __exit__(self, *a):
         self._stop.set()
 
+    def _critical(self):
+        """
+        Gerçekten tehlikeli mi? Boş RAM azaldığında Windows bekleyen belleği boşaltır ve sayfa dosyasına yazar;
+        bu normaldir. Tehlike, sayfa dosyasında da yer kalmadığında (ya da sayfa dosyası yokken) başlar.
+        """
+        free = ram_available_gb()
+        if free >= self.limit_gb:
+            return False, free
+        pf = pagefile_free_gb()
+        if pf > 2.0:
+            return False, free
+        return True, free
+
     def _run(self):
+        low = 0
         while not self._stop.wait(self.interval):
-            free = ram_available_gb()
-            if free < self.limit_gb:
+            crit, free = self._critical()
+            low = low + 1 if crit else 0
+            if low >= self.confirm:
                 self.triggered = True
                 self.free_at_trigger = free
                 self.abort_event.set()
@@ -2371,6 +2412,7 @@ class ImageEngine:
         self.pipe = None
         self.key = None
         self.profile = None
+        self.ram_tight = False
         self.device = "cpu"
         self.parked = False
         self.sampler = "default"
@@ -2414,9 +2456,10 @@ class ImageEngine:
 
             disk_gb = folder_size_bytes(path) / GB
             need = model_ram_need_gb(model, profile, disk_gb)
-            avail = ram_available_gb() - ram_reserve_gb(hw.ram_total_gb) * 0.5
-            if need > avail + 0.5:
-                raise MemoryGuardError((need, max(0.0, avail)))
+            ok, usable, tight = ram_can_load(need, hw.ram_total_gb)
+            if not ok:
+                raise MemoryGuardError((need, usable))
+            self.ram_tight = tight
 
             torch = import_torch()
             try:
@@ -2487,6 +2530,21 @@ class ImageEngine:
             return True
 
     # ------------------------------------------------------------------ LoRA
+    def _present_adapters(self):
+        """Pipeline'da gerçekten yüklü olan LoRA adaptörlerinin adları."""
+        try:
+            got = self.pipe.get_list_adapters() or {}
+            return {n for names in got.values() for n in (names or [])}
+        except Exception:
+            return set(self._loras)
+
+    def _unload_all_loras(self):
+        try:
+            self.pipe.unload_lora_weights()
+        except Exception:
+            pass
+        self._loras = {}
+
     def set_loras(self, specs):
         """
         specs: [(kimlik, dosya yolu, güç)] — yalnızca bu modelle uyumlu olanlar.
@@ -2506,6 +2564,9 @@ class ImageEngine:
                     self.pipe.unload_lora_weights()
                     self._loras = {}
                 return [], []
+            present = self._present_adapters()
+            for n in [n for n in self._loras if n not in present]:
+                self._loras.pop(n, None)          # kayıtta var ama modelde yok: izi temizle
             stale = [n for n in self._loras if n not in want]
             if stale:
                 try:
@@ -2513,23 +2574,33 @@ class ImageEngine:
                     for n in stale:
                         self._loras.pop(n, None)
                 except Exception:
-                    self.pipe.unload_lora_weights()
-                    self._loras = {}
+                    self._unload_all_loras()
             errors = []
             for n, (path, _w, key) in want.items():
                 if n in self._loras:
                     continue
                 try:
                     self.pipe.load_lora_weights(os.path.dirname(path), weight_name=os.path.basename(path), adapter_name=n)
-                    self._loras[n] = path
                 except Exception as e:
                     errors.append((key, f"{type(e).__name__}: {str(e)[:180]}"))
+                    continue
+                # diffusers, modelde karşılığı olmayan bir LoRA'yı hata vermeden "yükler" ama adaptör oluşturmaz
+                # (başka bir modele ait LoRA, desteklenmeyen biçim…). Bu durumda LoRA atlanır, iş çökmez.
+                if n in self._present_adapters():
+                    self._loras[n] = path
+                else:
+                    errors.append((key, "no matching layers in this model (LoRA made for another model or an "
+                                        "unsupported LoRA type)"))
             names = [n for n in want if n in self._loras]
             if names:
-                self.pipe.set_adapters(names, adapter_weights=[want[n][1] for n in names])
+                try:
+                    self.pipe.set_adapters(names, adapter_weights=[want[n][1] for n in names])
+                except Exception as e:
+                    self._unload_all_loras()
+                    errors += [(want[n][2], f"{type(e).__name__}: {str(e)[:180]}") for n in names]
+                    names = []
             elif self._loras:
-                self.pipe.unload_lora_weights()
-                self._loras = {}
+                self._unload_all_loras()
             return [(want[n][2], want[n][1]) for n in names], errors
 
     # ------------------------------------------------------------------ örnekleyici (sampler)

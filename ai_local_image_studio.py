@@ -267,7 +267,7 @@ EN = {
     "log_oom": "⚠️ VRAM was not enough → switching to {profile} and retrying.",
     "log_oom_final": "❌ Not enough memory even in the lowest profile. Try a smaller model or lower resolution.",
     "log_ram_guard": "⛔ Memory Guard: free RAM dropped to {free:.1f} GB — the job was stopped safely to protect the system.",
-    "err_ram": "❌ Not enough free RAM for this model: needs ~{need:.1f} GB, free {avail:.1f} GB (a reserve is kept for Windows). Close other programs or choose a smaller model.",
+    "err_ram": "❌ Not enough memory for this model: ~{need:.1f} GB needed, only {avail:.1f} GB available even with the Windows page file. Close other programs, enlarge the page file ('System managed size') or choose a smaller model.",
     "log_download_start": "Downloading {name} ({size}) → {path}",
     "log_download_done": "✅ {name} downloaded.",
     "log_deleted": "🗑️ {name} deleted.",
@@ -643,6 +643,7 @@ EN = {
     "custom_license_q": "You are using a model you added yourself.\n\nThe program cannot check its license: some models do not allow commercial use or have other conditions. Checking the license and how you use the images is your responsibility.\n\nContinue? (not asked again)",
     "custom_cfg_name": "Settings files for {base} (no model weights)",
     "log_custom_cfg": "Downloading the small settings files for {base} (structure, scheduler, tokenizer — no weights)…",
+    "log_ram_tight": "ℹ️ The model needs more than the RAM that is free right now — Windows frees cached memory and uses the page file, so loading may take a little longer.",
     "log_custom_missing": "The model file is no longer there: {path}",
 }
 
@@ -4321,6 +4322,8 @@ class ImageStudio:
                             self.log(t("log_loading", name=m["name"]))
                             t0 = time.time()
                             self.engine.load(m, path, profile, self.hw)
+                            if self.engine.ram_tight:
+                                self.log(t("log_ram_tight"))
                             self.log(t("log_loaded", sec=time.time() - t0))
                         else:
                             self.engine.unpark()
