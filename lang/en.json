@@ -366,6 +366,7 @@
   "v2_captions": "Descriptions:",
   "v2_autocap": "🔍 Read images without a description automatically (Florence-2)",
   "v2_caption_now": "🔍 Read now",
+  "v2_log_collage_later": "No decision for {n} collage-like image(s) — you'll be asked again when training starts.",
   "v2_caps_count": "{k} / {n} images have a description.",
   "v2_rewards": "Rewards:",
   "v2_rewards_count": "👍 {up}  ·  👎 {down}  ·  pairs: {pairs}",

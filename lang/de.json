@@ -390,6 +390,7 @@
   "v2_captions": "Beschreibungen:",
   "v2_autocap": "🔍 Bilder ohne Beschreibung automatisch lesen (Florence-2)",
   "v2_caption_now": "🔍 Jetzt lesen",
+  "v2_log_collage_later": "Keine Entscheidung zu {n} collageartigen Bild(ern) — beim Start des Trainings wird erneut gefragt.",
   "v2_caps_count": "{k} / {n} Bilder haben eine Beschreibung.",
   "v2_rewards": "Bewertungen:",
   "v2_rewards_count": "👍 {up}  ·  👎 {down}  ·  Paare: {pairs}",

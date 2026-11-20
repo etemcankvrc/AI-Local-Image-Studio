@@ -390,6 +390,7 @@
   "v2_captions": "Açıklamalar:",
   "v2_autocap": "🔍 Açıklaması olmayan görselleri otomatik oku (Florence-2)",
   "v2_caption_now": "🔍 Şimdi oku",
+  "v2_log_collage_later": "{n} kolaj gibi görünen görsel için karar verilmedi — eğitim başlarken yeniden sorulacak.",
   "v2_caps_count": "{k} / {n} görselin açıklaması var.",
   "v2_rewards": "Ödül/ceza:",
   "v2_rewards_count": "👍 {up}  ·  👎 {down}  ·  çift: {pairs}",

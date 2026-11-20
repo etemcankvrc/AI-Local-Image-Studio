@@ -1,8 +1,14 @@
-# 🎨 AI Local Image Studio v1.4.1
+# 🎨 AI Local Image Studio v1.4.2
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.2'de yeni — kolajlar okunmadan önce sorulur
+
+- **🔍 Şimdi oku** artık önce kolaj / bölünmüş ekran kontrolü yapar, sonra okur. Kes dersen yalnızca kareler okunur, asılları okunmaz.
+- Kolaj sorusunun penceresini kapatmak artık "Kalsın" sayılmaz: karar verilmemiş kalır ve eğitim başlarken yeniden sorulur.
+- Sıra her yerde aynı: **içe aktarma → kolaj sorusu → okuma**. İçe aktarmadan hemen sonraki otomatik okuma aynı soruyu ikinci kez sormaz.
 
 ## v1.4.1'de yeni — yapay zeka yazdığına sadık kalır
 
@@ -45,7 +51,7 @@ LLM gibi görsel modelleri ve LoRA'lar da artık ağda paylaşılabilir. İki y�
 - Program artık bu görselleri bulur ve küçük önizlemeleriyle gösterir (kırmızı çerçeveler = kesilecek kareler). Seçenekler:
   - **✂ Kes, ayrı görseller yap:** her kare ayrı bir görsel olarak veri setine eklenir (veri setinin adıyla), yani bir resimden birden fazla eğitim verisi çıkar. Ayırıcı beyaz/siyah şeritler kırpılır; iç içe düzenler (ör. solda büyük, sağda iki küçük) de ayrılır. "Şundan küçük görselleri atla" boyutundan küçük kareler alınmaz. Yeni kareler otomatik açıklanır.
   - **Çıkar:** eğitimden çıkarılır. **Kalsın:** kalır (bunlar için bir daha sorulmaz).
-  - Kontrol, içe aktarma (klasör, dosya, video, internet) bittiğinde ve eğitim başlarken yapılır. Eğitim başlarken **İptal** de seçilebilir.
+  - Kontrol, içe aktarma (klasör, dosya, video, internet) bittiğinde, **🔍 Şimdi oku**'ya basınca ve eğitim başlarken yapılır; her zaman okumadan önce. Eğitim başlarken **Eğitimi başlatma** da seçilebilir. Pencereyi kapatırsanız karar verilmemiş sayılır ve sonra yine sorulur.
   - Çıkarılan dosyalar silinmez, veri setinin `excluded` klasörüne taşınır. Kendi klasörünüzden bağlantı olarak eklenen dosyalara hiç dokunulmaz, yalnızca veri setinden çıkarılır.
   - Algılama ek model indirmez; görüntünün ortasındaki düz, tam boy sınırlara ve tek renkli ayırıcı şeritlere bakar. Tuğla, fayans gibi desenler kolaj sayılmaz. Nadiren yanılabilir; bu yüzden dosya adları gösterilir ve karar size bırakılır.
 

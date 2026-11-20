@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 
 
 def _app_dir():
@@ -433,6 +433,7 @@ EN = {
     "v2_captions": "Descriptions:",
     "v2_autocap": "🔍 Read images without a description automatically (Florence-2)",
     "v2_caption_now": "🔍 Read now",
+    "v2_log_collage_later": "No decision for {n} collage-like image(s) — you'll be asked again when training starts.",
     "v2_caps_count": "{k} / {n} images have a description.",
     "v2_rewards": "Rewards:",
     "v2_rewards_count": "👍 {up}  ·  👎 {down}  ·  pairs: {pairs}",
@@ -2257,7 +2258,7 @@ class StyleStudioWindow:
         data = core.load_dataset(self.paths, slug)
         return bool(data) and any(not it.get("caption") for it in data["items"])
 
-    def on_caption(self):
+    def on_caption(self, after_import=False):
         if self.app.running():
             messagebox.showinfo(APP_NAME, t("busy"), parent=self.w)
             return
@@ -2272,7 +2273,8 @@ class StyleStudioWindow:
         if plan is None:
             return
         self.collect()
-        self.app.start_job("analysis", self.job_analysis, "caption", slug, plan, {})
+        # içe aktarmadan hemen sonraki otomatik okumada kolajlar az önce soruldu, tekrar sorulmaz
+        self.app.start_job("analysis", self.job_analysis, "caption", slug, plan, {"after_import": after_import})
         self.update_state()
 
     def on_start(self):
@@ -2336,6 +2338,9 @@ class StyleStudioWindow:
     def job_analysis(self, mode, slug, plan, opts):
         app = self.app
         m15 = core.IMAGE_MODEL_BY_KEY["sd15"]
+        if mode == "caption" and not opts.get("after_import"):
+            # "Şimdi oku": kolajlar okunmadan önce sorulur (kesilirse kareler okunur, asılları okunmaz)
+            self._collage_check(slug, can_cancel=False)
         if mode in ("light", "deep"):
             cc = self._collage_check(slug, can_cancel=True)
             if cc == "cancel":
@@ -2735,7 +2740,10 @@ class StyleStudioWindow:
             if can_cancel:
                 app.log(t("v2_log_collage_cancel"))
                 return "cancel"
-            ans = "keep"
+            # pencere kapatıldı: karar verilmedi sayılır ("kalsın" diye işaretlenmez), eğitim başlarken yine sorulur
+            app.log(t("v2_log_collage_later", n=len(files)))
+            self._finish(None)
+            return "ok"
         result = "ok"
         if ans == "split":
             app.status("v2_status_collage_split")
@@ -2792,7 +2800,7 @@ class StyleStudioWindow:
             self.app.log(t("v2_log_caption_later"))
             return
         self.app.log(t("v2_log_caption_auto"))
-        self.on_caption()
+        self.on_caption(after_import=True)
 
     def job_download(self, slug, urls):
         self.app.status("v2_status_web")

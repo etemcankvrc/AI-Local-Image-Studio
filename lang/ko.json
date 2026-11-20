@@ -390,6 +390,7 @@
   "v2_captions": "설명:",
   "v2_autocap": "🔍 설명 없는 이미지를 자동으로 읽기 (Florence-2)",
   "v2_caption_now": "🔍 지금 읽기",
+  "v2_log_collage_later": "콜라주처럼 보이는 이미지 {n}개에 대한 결정이 없습니다 — 학습을 시작할 때 다시 묻습니다.",
   "v2_caps_count": "이미지 {n}개 중 {k}개에 설명이 있습니다.",
   "v2_rewards": "보상/벌점:",
   "v2_rewards_count": "👍 {up}  ·  👎 {down}  ·  쌍: {pairs}",
