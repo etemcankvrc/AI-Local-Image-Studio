@@ -4131,7 +4131,8 @@ PEFT_PIP = ["peft==0.22.0"]
 PEFT_SIZE = "~1 MB"
 LORA_MAX_FILES = 2000
 BASE_LABELS = {"sd15": "SD 1.5", "sdxl": "SDXL", "sd2": "SD 2.x", "flux": "FLUX.1", "dit": "DiT", "any": "—",
-               "unknown": "?"}
+               "unknown": "?", "flux2_klein_4b": "FLUX.2 4B", "flux2": "FLUX.2 (9B/dev)", "zimage_turbo": "Z-Image",
+               "wan": "Wan (video)", "qwen_image": "Qwen-Image", "other": "?"}
 
 
 def own_lora_dir(paths):
@@ -4211,11 +4212,102 @@ def read_safetensors_header(path, limit=64 * MB):
     return meta, shapes
 
 
+# DiT tabanlı modellerin LoRA'ları anahtar adları ve boyutlarıyla birbirinden ayrılır. Yalnızca "DiT" demek yetmez:
+# FLUX.1, FLUX.2, Z-Image, Wan (video), Qwen-Image… LoRA'ları birbirine uymaz.
+FLUX2_KLEIN_4B = {"double": 5, "single": 20, "hidden": 3072}
+ZIMAGE_ARCH = {"layers": 30, "refiner": 2, "dim": 3840}
+_LORA_PREFIXES = ("base_model.model.", "transformer.", "diffusion_model.", "model.diffusion_model.", "unet.")
+
+
+def _lora_module_names(shapes):
+    """{modül adı: (giriş boyutu, çıkış boyutu)} — LoRA'nın dokunduğu katmanlar (önek ve lora sonekleri atılmış).
+    kohya biçimi (lora_unet_double_blocks_0_img_attn_qkv) noktalı biçime çevrilir."""
+    out = {}
+    for k, shp in shapes.items():
+        low = k.lower()
+        m = re.match(r"(.+?)\.(lora_a|lora_b|lora_down|lora_up|lora\.down|lora\.up)(\.default)?\.weight$", low)
+        if not m:
+            continue
+        name, part = m.group(1), m.group(2)
+        if name.startswith("lora_unet_") or name.startswith("lora_transformer_"):
+            name = name.split("_", 2)[2]
+            name = re.sub(r"_(\d+)_", r".\1.", name)
+            for a, b in (("double_blocks", "double_blocks"), ("single_blocks", "single_blocks")):
+                name = name.replace(a + "_", a + ".")
+            name = re.sub(r"(img|txt)_(attn|mlp|mod)_", r"\1_\2.", name)
+        for pre in _LORA_PREFIXES:
+            if name.startswith(pre):
+                name = name[len(pre):]
+                break
+        cur = list(out.get(name, (None, None)))
+        if shp and len(shp) >= 2:
+            if part in ("lora_a", "lora_down", "lora.down"):
+                cur[0] = int(shp[1])
+            else:
+                cur[1] = int(shp[0])
+        out[name] = tuple(cur)
+    return out
+
+
+def _max_index(names, block):
+    idx = [int(m.group(1)) for n in names for m in [re.match(r"(?:.*\.)?" + block + r"\.(\d+)\.", n + ".")] if m]
+    return max(idx) if idx else -1
+
+
+def detect_dit_lora(shapes):
+    """DiT LoRA'sının ait olduğu model: flux2_klein_4b | flux2 | flux | zimage_turbo | wan | qwen_image | None."""
+    mods = _lora_module_names(shapes)
+    if not mods:
+        return None
+    names = list(mods)
+    joined = " ".join(names)
+    if any(t in joined for t in ("down_blocks", "up_blocks", "mid_block", "input_blocks", "output_blocks",
+                                 "middle_block")):
+        return None              # SD 1.5 / SDXL UNet LoRA'sı
+    # Wan (video) ve Qwen-Image: kendi adlandırmaları
+    if re.search(r"(^|\s)blocks\.\d+\.(cross_attn|self_attn|ffn)\.", " " + joined):
+        return "wan"
+    if "img_mlp.net" in joined or "txt_mlp.net" in joined or ".img_mod.1" in joined:
+        return "qwen_image"
+    # Z-Image: layers.N.attention / feed_forward, noise_refiner, context_refiner
+    if re.search(r"(^|\s)(layers|noise_refiner|context_refiner)\.\d+\.(attention|feed_forward|adaln_modulation)",
+                 " " + joined):
+        dims = {d for v in mods.values() for d in v if d}
+        if _max_index(names, "layers") < ZIMAGE_ARCH["layers"] and ZIMAGE_ARCH["dim"] in dims:
+            return "zimage_turbo"
+        return "other"
+    is_flux = any(t in joined for t in ("double_blocks", "single_blocks", "transformer_blocks", "single_transformer_blocks"))
+    if not is_flux:
+        return None
+    flux2_marks = ("to_qkv_mlp_proj", "ff.linear_in", "ff_context.linear_in", "double_stream_modulation",
+                   "single_stream_modulation")
+    flux1_marks = ("proj_mlp", "ff.net.", "ff_context.net.", "norm1.linear", "norm.linear")
+    out_dims = {v[1] for v in mods.values() if v[1]}
+    in_dims = {v[0] for v in mods.values() if v[0]}
+    dbl = max(_max_index(names, "double_blocks"), _max_index(names, "transformer_blocks"))
+    sgl = max(_max_index(names, "single_blocks"), _max_index(names, "single_transformer_blocks"))
+    if any(t in joined for t in flux1_marks) or out_dims & {21504, 12288}:
+        return "flux"
+    if any(t in joined for t in flux2_marks) or out_dims & {27648, 18432}:
+        k = FLUX2_KLEIN_4B
+        if dbl < k["double"] and sgl < k["single"] and (not in_dims or k["hidden"] in in_dims):
+            return "flux2_klein_4b"
+        return "flux2"
+    # adlandırmadan ayrılamadı: blok sayısına bak (FLUX.1: 19 + 38 blok)
+    if dbl >= FLUX2_KLEIN_4B["double"] or sgl >= FLUX2_KLEIN_4B["single"]:
+        return "flux"
+    return "other"
+
+
 def detect_lora_base(meta, shapes):
-    """LoRA'nın hangi temel modele ait olduğu: sd15 | sdxl | sd2 | flux | dit | unknown."""
+    """LoRA'nın hangi temel modele ait olduğu: sd15 | sdxl | sd2 | flux | flux2_klein_4b | flux2 | zimage_turbo |
+    wan | qwen_image | other | unknown."""
     own = str(meta.get("ails_base", ""))
     if own in IMAGE_MODEL_BY_KEY:
         return own
+    dit = detect_dit_lora(shapes)
+    if dit:
+        return dit
     mv = str(meta.get("ss_base_model_version", "")).lower()
     arch = str(meta.get("modelspec.architecture", "")).lower()
     if mv.startswith("sdxl") or "stable-diffusion-xl" in arch:
@@ -4224,8 +4316,6 @@ def detect_lora_base(meta, shapes):
         return "sd15"
     if mv.startswith("sd_v2") or "stable-diffusion-v2" in arch:
         return "sd2"
-    if "flux" in mv or "flux" in arch:
-        return "flux"
     low = {k.lower(): v for k, v in shapes.items()}
     if any(k.startswith(("lora_te2_", "te2.", "text_encoder_2.")) for k in low):
         return "sdxl"
@@ -4235,24 +4325,23 @@ def detect_lora_base(meta, shapes):
             return {768: "sd15", 1024: "sd2", 2048: "sdxl"}.get(int(shp[-1]), "unknown")
     if any("input_blocks" in k for k in low):
         return "sdxl"
-    if any("double_blocks" in k or "single_blocks" in k for k in low):
+    if "flux" in mv or "flux" in arch:
         return "flux"
     if any(k.startswith(("transformer.", "diffusion_model.")) for k in low):
-        return "dit"
+        return "other"
     return "unknown"
 
 
 def lora_compat(base, model_key):
-    """'yes' | 'no' | 'maybe' — LoRA seçili görsel modeliyle çalışır mı?"""
+    """'yes' | 'no' | 'maybe' — LoRA seçili görsel modeliyle (mimarisiyle) çalışır mı?"""
     if base == "any":
         return "yes"
-    if base in ("sd15", "sdxl"):
+    if base in ("sd15", "sdxl", "flux2_klein_4b", "zimage_turbo"):
         return "yes" if base == model_key else "no"
-    if base in ("sd2", "flux"):
+    if base in ("sd2", "flux", "flux2", "wan", "qwen_image", "other", "dit"):
         return "no"
-    if base == "dit":
-        return "maybe" if model_key in ("zimage_turbo", "flux2_klein_4b") else "no"
-    return "maybe"
+    # tanınmayan biçim: SD 1.5 / SDXL'de belki (eski kohya biçimleri), DiT modellerinde hayır
+    return "maybe" if model_key in ("sd15", "sdxl") else "no"
 
 
 def _top_tags(meta, n=4):
@@ -5027,7 +5116,99 @@ DEFAULT_SELF_PROMPTS = [
 #   DPO bellek dostu uygulanır: önce gradyansız ileri geçişlerle katsayı bulunur, sonra kazanan ve
 #   kaybeden için AYRI geri yayılım yapılır (tek seferde ikisini tutmak gerekmez).
 # =============================================================================
-TRAIN_BASES = ("sd15",)
+TRAIN_BASES = ("sd15", "sdxl", "flux2_klein_4b", "zimage_turbo")
+# Eğitim modelleri. vram: güvenli çalışması için gereken en az VRAM (GB). FLUX.2 ve Z-Image, LoRA'yı damıtılmış
+# (hızlı) modelde değil, aynı ailenin damıtılmamış "base" modelinde eğitir; eğitilen LoRA hızlı modelde kullanılır.
+# Base modelden yalnızca dönüştürücü (transformer) indirilir; VAE, metin kodlayıcı ve sözlük kurulu modelden alınır.
+TRAIN_SPECS = {
+    "sd15": {"vram": 3.5, "res": 512, "fallback": (384,), "cpu_ok": True},
+    "sdxl": {"vram": 10.0, "res": 1024, "fallback": (768, 512), "cpu_ok": False},
+    "flux2_klein_4b": {"vram": 12.0, "res": 512, "fallback": (384,), "cpu_ok": False,
+                       "base_repo": "black-forest-labs/FLUX.2-klein-base-4B", "base_name": "FLUX.2 [klein] base 4B",
+                       "base_gb": 7.8, "license": "Apache-2.0", "sample_steps": 24, "sample_cfg": 4.0},
+    "zimage_turbo": {"vram": 16.0, "res": 512, "fallback": (384,), "cpu_ok": False,
+                     "base_repo": "Tongyi-MAI/Z-Image", "base_name": "Z-Image (base)", "base_gb": 12.3,
+                     "license": "Apache-2.0", "sample_steps": 28, "sample_cfg": 4.0},
+}
+
+
+def train_ready(hw, key):
+    """(uygun_mu, neden) — neden: '' | 'vram' (GPU yok ya da VRAM yetersiz)."""
+    sp = TRAIN_SPECS[key]
+    if sp["cpu_ok"]:
+        return True, ""
+    if hw.cuda_usable and hw.vram_gb >= sp["vram"] - 0.3:
+        return True, ""
+    return False, "vram"
+
+
+def train_base_dir(models_root, key):
+    """Eğitimde kullanılan dönüştürücünün klasörü: base modeli varsa onun, yoksa kurulu modelin kendisi."""
+    sp = TRAIN_SPECS[key]
+    if sp.get("base_repo"):
+        return os.path.join(models_root, "train", key)
+    return image_model_dir(models_root, IMAGE_MODEL_BY_KEY[key])
+
+
+def is_train_base_installed(models_root, key):
+    if not TRAIN_SPECS[key].get("base_repo"):
+        return is_image_model_installed(models_root, IMAGE_MODEL_BY_KEY[key])
+    return os.path.exists(os.path.join(train_base_dir(models_root, key), MARKER))
+
+
+def download_train_base(models_root, key, progress_cb=None, abort_event=None):
+    """Base modelin yalnızca dönüştürücüsü (transformer/*) indirilir."""
+    from huggingface_hub import snapshot_download
+    sp = TRAIN_SPECS[key]
+    dest = train_base_dir(models_root, key)
+    allow = ["transformer/*.json", "transformer/*.safetensors"]
+    total = int(sp["base_gb"] * GB)
+    try:
+        infos = snapshot_download(sp["base_repo"], allow_patterns=allow, dry_run=True)
+        total = sum((i.file_size or 0) for i in infos) or total
+    except Exception:
+        pass
+    already = folder_size_bytes(dest) if os.path.isdir(dest) else 0
+    check_space(models_root, max(0, total - already) / GB + 1.0)
+    os.makedirs(dest, exist_ok=True)
+    result = {"err": None}
+
+    def _run():
+        try:
+            snapshot_download(sp["base_repo"], local_dir=dest, allow_patterns=allow, max_workers=4)
+        except Exception as e:  # noqa
+            result["err"] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    while t.is_alive():
+        t.join(1.0)
+        if progress_cb:
+            progress_cb(folder_size_bytes(dest), total)
+        if abort_event is not None and abort_event.is_set():
+            raise AbortedError("user")
+    if result["err"] is not None:
+        err = result["err"]
+        if isinstance(err, OSError) and getattr(err, "errno", None) == 28:
+            raise DiskFullError(drive_label(models_root), total / GB, disk_free_gb(models_root))
+        raise err
+    if not os.path.exists(os.path.join(dest, "transformer", "config.json")):
+        raise RuntimeError("transformer/config.json missing — download incomplete")
+    with open(os.path.join(dest, MARKER), "w", encoding="utf-8") as f:
+        json.dump({"repo": sp["base_repo"], "size_gb": round(folder_size_bytes(dest) / GB, 2),
+                   "date": time.strftime("%Y-%m-%d %H:%M")}, f)
+    return dest
+
+
+def make_trainer(paths, key, device, rank, lr, resolution=None):
+    model = IMAGE_MODEL_BY_KEY[key]
+    path = image_model_dir(paths.models, model)
+    if key == "sd15":
+        return LoraTrainer(path, model, device, rank=rank, lr=lr, resolution=resolution)
+    if key == "sdxl":
+        return SDXLLoraTrainer(path, model, device, rank=rank, lr=lr, resolution=resolution)
+    return FlowLoraTrainer(path, train_base_dir(paths.models, key), model, device, rank=rank, lr=lr,
+                           resolution=resolution)
 STYLE_RANK, PREF_RANK = 16, 8
 STYLE_LR, PREF_LR = 1e-4, 1e-5
 
@@ -5118,7 +5299,14 @@ def _lora_sidecar(path):
         return {}
 
 
-def pick_lora_path(d, name, slug, learn, rank):
+TRAIN_SUFFIX = {"sd15": "sd15", "sdxl": "sdxl", "flux2_klein_4b": "flux2", "zimage_turbo": "zimage"}
+
+
+class TrainVramError(RuntimeError):
+    """Seçilen eğitim modeli için ekran kartı belleği yetersiz (ya da NVIDIA GPU yok)."""
+
+
+def pick_lora_path(d, name, slug, learn, rank, base="sd15"):
     """
     Eğitimin kaydedileceği dosya. Aynı veri seti + tür + ayarla eğitilmiş bir LoRA varsa ondan devam edilir;
     yoksa ilk BOŞ ad seçilir (ad, ad_place, ad_place_2 …). Başka bir eğitime ait LoRA asla ezilmez.
@@ -5131,7 +5319,8 @@ def pick_lora_path(d, name, slug, learn, rank):
         if os.path.exists(p):
             info = _lora_sidecar(p)
             if info.get("dataset") == slug and info.get("rank") == rank and \
-                    norm_learn(info.get("learn") or info.get("type")) == learn:
+                    norm_learn(info.get("learn") or info.get("type")) == learn and \
+                    (info.get("base") or "sd15") == base:
                 return p, info
         elif free is None and not os.path.exists(os.path.splitext(p)[0] + ".json"):
             free = p
@@ -5331,7 +5520,7 @@ class LoraTrainer:
                         out.append(None)
                         weights.append(None)
                         continue
-                    lat = self.vae.encode(x.to(self.device, self.wdtype)).latent_dist.sample() * self.vae.config.scaling_factor
+                    lat = self._encode_latent(x)
                     out.append(lat.to("cpu"))
                     weights.append(wt)
                     if progress_cb:
@@ -5340,6 +5529,10 @@ class LoraTrainer:
             self.vae.to("cpu")
             free_gpu_memory()
         return (out, weights) if with_weights else out
+
+    def _encode_latent(self, x):
+        """Görsel → modelin gizli uzayı (SD 1.5: VAE örneği × ölçek)."""
+        return self.vae.encode(x.to(self.device, self.wdtype)).latent_dist.sample() * self.vae.config.scaling_factor
 
     def _encode_text_on_device(self, text):
         torch = self.torch
@@ -5535,6 +5728,455 @@ class LoraTrainer:
         free_gpu_memory()
 
 
+class SDXLLoraTrainer(LoraTrainer):
+    """SDXL LoRA eğitimi: iki metin kodlayıcı, ek zaman/boyut koşulları. VAE fp32 kodlar (SDXL VAE fp16'da bozulur)."""
+
+    def __init__(self, model_path, model, device, rank=STYLE_RANK, lr=STYLE_LR, resolution=None):
+        torch = import_torch()
+        import contextlib
+        from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+        from transformers import CLIPTextModel, CLIPTextModelWithProjection, AutoTokenizer
+        from peft import LoraConfig
+        self.torch, self._ctx = torch, contextlib
+        self.device = torch.device(device)
+        self.on_gpu = self.device.type == "cuda"
+        self.wdtype = torch.float16 if self.on_gpu else torch.float32
+        self.res = int(resolution or TRAIN_SPECS["sdxl"]["res"])
+        kw = dict(torch_dtype=self.wdtype)
+        variant = model.get("variant")
+
+        def _load(cls, sub, **extra):
+            k = dict(kw, **extra)
+            try:
+                return cls.from_pretrained(model_path, subfolder=sub, variant=variant, **k) if variant \
+                    else cls.from_pretrained(model_path, subfolder=sub, **k)
+            except (OSError, ValueError):
+                return cls.from_pretrained(model_path, subfolder=sub, **k)
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer")
+        self.tokenizer_2 = AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer_2")
+        self.text_encoder = _load(CLIPTextModel, "text_encoder")
+        self.text_encoder_2 = _load(CLIPTextModelWithProjection, "text_encoder_2")
+        self.vae = _load(AutoencoderKL, "vae", torch_dtype=torch.float32)
+        self.unet = _load(UNet2DConditionModel, "unet")
+        self.noise_scheduler = DDPMScheduler.from_pretrained(model_path, subfolder="scheduler")
+        for m in (self.text_encoder, self.text_encoder_2, self.vae, self.unet):
+            m.requires_grad_(False)
+        self.lora_config = LoraConfig(r=rank, lora_alpha=rank, init_lora_weights="gaussian",
+                                      target_modules=["to_k", "to_q", "to_v", "to_out.0"])
+        self.unet.add_adapter(self.lora_config)
+        for p in self.unet.parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+        self.params = [p for p in self.unet.parameters() if p.requires_grad]
+        try:
+            self.unet.enable_gradient_checkpointing()
+        except Exception:
+            pass
+        self.unet.to(self.device)
+        self.unet.train()
+        self.opt = torch.optim.AdamW(self.params, lr=lr, weight_decay=1e-2)
+        self.scaler = torch.amp.GradScaler("cuda") if self.on_gpu else None
+        self.pred_type = self.noise_scheduler.config.get("prediction_type", "epsilon")
+        self.steps = 0
+        self._emb_cache = {}
+        self.noise_offset = 0.05
+        try:
+            self.vae_scale = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        except Exception:
+            self.vae_scale = 8
+
+    def _encode_latent(self, x):
+        return self.vae.encode(x.to(self.device, self.torch.float32)).latent_dist.sample() * self.vae.config.scaling_factor
+
+    def _encode_text_on_device(self, text):
+        torch = self.torch
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        with torch.no_grad():
+            embs = []
+            pooled = None
+            for tok, te in ((self.tokenizer, self.text_encoder), (self.tokenizer_2, self.text_encoder_2)):
+                ids = tok(text, padding="max_length", max_length=tok.model_max_length, truncation=True,
+                          return_tensors="pt").input_ids.to(self.device)
+                out = te(ids, output_hidden_states=True)
+                embs.append(out.hidden_states[-2])
+                if te is self.text_encoder_2:
+                    pooled = out[0]
+            emb = (torch.cat(embs, dim=-1).to("cpu"), pooled.to("cpu"))
+        if len(self._emb_cache) < 4000:
+            self._emb_cache[text] = emb
+        return emb
+
+    def _te_to(self, dev):
+        self.text_encoder.to(dev)
+        self.text_encoder_2.to(dev)
+
+    def encode_text(self, text):
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        self._te_to(self.device)
+        try:
+            return self._encode_text_on_device(text)
+        finally:
+            self._te_to("cpu")
+
+    def encode_texts(self, texts, progress_cb=None):
+        self._te_to(self.device)
+        try:
+            out = []
+            for n, t in enumerate(texts):
+                out.append(self._encode_text_on_device(t))
+                if progress_cb:
+                    progress_cb(n + 1, len(texts))
+            return out
+        finally:
+            self._te_to("cpu")
+            free_gpu_memory()
+
+    def _added(self, pooled, n):
+        torch = self.torch
+        r = float(self.res)
+        tid = torch.tensor([[r, r, 0.0, 0.0, r, r]] * n, device=self.device, dtype=self.wdtype)
+        return {"text_embeds": pooled.to(self.device, self.wdtype), "time_ids": tid}
+
+    def step_sft(self, lat, emb, noise=None, t=None, weight=None):
+        torch = self.torch
+        prompt, pooled = emb
+        lat = lat.to(self.device, self.wdtype)
+        prompt = prompt.to(self.device, self.wdtype)
+        if noise is None:
+            noise = torch.randn_like(lat)
+            if self.noise_offset:
+                noise = noise + self.noise_offset * torch.randn(lat.shape[0], lat.shape[1], 1, 1, device=lat.device,
+                                                                dtype=lat.dtype)
+        if t is None:
+            t = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (lat.shape[0],), device=lat.device)
+        noisy = self.noise_scheduler.add_noise(lat, noise, t.long())
+        with self._autocast():
+            pred = self.unet(noisy, t, prompt, added_cond_kwargs=self._added(pooled, lat.shape[0])).sample
+        target = self._target(lat, noise, t)
+        if weight is None:
+            loss = self._mse(pred, target)
+        else:
+            w = weight.to(self.device, torch.float32)
+            err = (pred.float() - target.float()) ** 2
+            loss = (err * w).sum() / (w.sum() * err.shape[1]).clamp_min(1e-6)
+        self._backward(loss)
+        self._opt_step()
+        return float(loss.detach())
+
+    def step_dpo(self, *a, **k):
+        raise NotImplementedError("preference training is SD 1.5 only")
+
+    def save(self, out_path, info):
+        from diffusers import StableDiffusionXLPipeline
+        d, fn = os.path.split(out_path)
+        os.makedirs(d, exist_ok=True)
+        check_space(d, 0.3)
+        part = fn + ".part"
+        StableDiffusionXLPipeline.save_lora_weights(save_directory=d, unet_lora_layers=self.lora_state(),
+                                                    weight_name=part, safe_serialization=True)
+        os.replace(os.path.join(d, part), out_path)
+        with open(os.path.splitext(out_path)[0] + ".json", "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=1)
+        return out_path
+
+    def sample(self, prompt, negative="", seed=1234, steps=20, cfg=7.0, size=None):
+        torch = self.torch
+        from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
+        sched = DPMSolverMultistepScheduler.from_config(self.noise_scheduler.config, use_karras_sigmas=True,
+                                                        algorithm_type="dpmsolver++")
+        pipe = StableDiffusionXLPipeline(vae=self.vae, text_encoder=self.text_encoder,
+                                         text_encoder_2=self.text_encoder_2, tokenizer=self.tokenizer,
+                                         tokenizer_2=self.tokenizer_2, unet=self.unet, scheduler=sched)
+        pipe.set_progress_bar_config(disable=True)
+        size = int(size or self.res)
+        self.vae.to(self.device)
+        self._te_to(self.device)
+        self.unet.eval()
+        try:
+            with torch.no_grad(), self._autocast():
+                img = pipe(prompt, negative_prompt=negative or None, num_inference_steps=steps, guidance_scale=cfg,
+                           width=size, height=size, generator=torch.Generator("cpu").manual_seed(int(seed))).images[0]
+        finally:
+            self.unet.train()
+            self.vae.to("cpu")
+            self._te_to("cpu")
+            free_gpu_memory()
+        return img
+
+    def close(self):
+        self.unet = self.vae = self.text_encoder = self.text_encoder_2 = None
+        self.opt = None
+        free_gpu_memory()
+
+
+class FlowLoraTrainer(LoraTrainer):
+    """
+    Akış eşleştirmeli (flow matching) DiT modelleri için LoRA eğitimi: FLUX.2 [klein] 4B ve Z-Image.
+    Dönüştürücü base (damıtılmamış) modelden, VAE / metin kodlayıcı / sözlük kurulu (hızlı) modelden alınır.
+    Bellek sırası: önce görseller (VAE), sonra metinler (metin kodlayıcı; iş bitince bellekten tamamen silinir),
+    en son dönüştürücü GPU'ya alınır — 12 GB'ta FLUX.2 eğitimi böyle sığar.
+    """
+
+    def __init__(self, model_path, base_dir, model, device, rank=STYLE_RANK, lr=STYLE_LR, resolution=None):
+        torch = import_torch()
+        import contextlib
+        import importlib
+        import diffusers
+        import transformers
+        from peft import LoraConfig
+        self.torch, self._ctx = torch, contextlib
+        self.key = model["key"]
+        self.flux = self.key == "flux2_klein_4b"
+        self.device = torch.device(device)
+        self.on_gpu = self.device.type == "cuda"
+        self.wdtype = torch.bfloat16 if self.on_gpu else torch.float32
+        self.res = int(resolution or TRAIN_SPECS[self.key]["res"])
+        self.res = max(64, self.res // 16 * 16)
+        with open(os.path.join(model_path, "model_index.json"), encoding="utf-8") as f:
+            idx = json.load(f)
+
+        def cls_of(comp):
+            lib, name = idx[comp]
+            return getattr(diffusers if lib == "diffusers" else transformers, name)
+
+        kw = dict(torch_dtype=self.wdtype)
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer")
+        self.text_encoder = cls_of("text_encoder").from_pretrained(model_path, subfolder="text_encoder", **kw)
+        self.vae = cls_of("vae").from_pretrained(model_path, subfolder="vae", **kw)
+        tdir = base_dir if os.path.isdir(os.path.join(base_dir, "transformer")) else model_path
+        self.transformer = cls_of("transformer").from_pretrained(tdir, subfolder="transformer", **kw)
+        self.noise_scheduler = diffusers.FlowMatchEulerDiscreteScheduler.from_pretrained(model_path,
+                                                                                          subfolder="scheduler")
+        self._pipe_cls = cls_of_pipe = getattr(diffusers, idx["_class_name"])
+        self._pipe_mod = importlib.import_module(cls_of_pipe.__module__)
+        for m in (self.text_encoder, self.vae, self.transformer):
+            m.requires_grad_(False)
+        if self.flux:
+            targets = ["to_q", "to_k", "to_v", "to_out.0", "add_q_proj", "add_k_proj", "add_v_proj", "to_add_out",
+                       "to_qkv_mlp_proj"]
+        else:
+            targets = ["to_q", "to_k", "to_v", "to_out.0"]
+        self.lora_config = LoraConfig(r=rank, lora_alpha=rank, init_lora_weights="gaussian", target_modules=targets)
+        self.transformer.add_adapter(self.lora_config)
+        for p in self.transformer.parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+        self.params = [p for p in self.transformer.parameters() if p.requires_grad]
+        try:
+            self.transformer.enable_gradient_checkpointing()
+        except Exception:
+            pass
+        self.transformer.train()
+        self._on_device = False
+        self.opt = torch.optim.AdamW(self.params, lr=lr, weight_decay=1e-2)
+        self.scaler = None
+        self.pred_type = "flow"
+        self.steps = 0
+        self._emb_cache = {}
+        self.noise_offset = 0.0
+        vs = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.vae_scale = vs * 2 if self.flux else vs        # ağırlık haritası: FLUX.2'de 2×2 yamalı token ızgarası
+
+    # ---- yardımcılar
+    def _autocast(self):
+        if self.on_gpu:
+            return self.torch.autocast("cuda", dtype=self.torch.bfloat16)
+        return self._ctx.nullcontext()
+
+    def _ensure_transformer(self):
+        if not self._on_device:
+            self.transformer.to(self.device)
+            self._on_device = True
+
+    def _encode_latent(self, x):
+        torch = self.torch
+        x = x.to(self.device, self.wdtype)
+        if self.flux:
+            lat = self.vae.encode(x).latent_dist.mode()
+            lat = self._pipe_cls._patchify_latents(lat)
+            mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(lat.device, lat.dtype)
+            std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + self.vae.config.batch_norm_eps).to(
+                lat.device, lat.dtype)
+            return (lat - mean) / std
+        lat = self.vae.encode(x).latent_dist.sample()
+        return (lat - self.vae.config.shift_factor) * self.vae.config.scaling_factor
+
+    def _encode_text_on_device(self, text):
+        torch = self.torch
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        with torch.no_grad():
+            if self.flux:
+                emb = self._pipe_cls._get_qwen3_prompt_embeds(self.text_encoder, self.tokenizer, [text],
+                                                              dtype=self.wdtype, device=self.device)
+                emb = emb.to("cpu")
+            else:
+                msgs = [{"role": "user", "content": text}]
+                t = self.tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                                       enable_thinking=True)
+                ti = self.tokenizer([t], padding="max_length", max_length=512, truncation=True, return_tensors="pt")
+                ids = ti.input_ids.to(self.device)
+                mask = ti.attention_mask.to(self.device).bool()
+                hs = self.text_encoder(input_ids=ids, attention_mask=mask, output_hidden_states=True).hidden_states[-2]
+                emb = hs[0][mask[0]].to("cpu", self.wdtype)
+        if len(self._emb_cache) < 4000:
+            self._emb_cache[text] = emb
+        return emb
+
+    def encode_text(self, text):
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        if self.text_encoder is None:
+            raise RuntimeError("text encoder already released")
+        self.text_encoder.to(self.device)
+        try:
+            return self._encode_text_on_device(text)
+        finally:
+            self.text_encoder.to("cpu")
+
+    def encode_texts(self, texts, progress_cb=None):
+        """Tüm metinler (ve örnek görselin boş negatif metni) kodlanır; sonra metin kodlayıcı bellekten silinir."""
+        self.text_encoder.to(self.device)
+        try:
+            out = []
+            for n, t in enumerate(texts):
+                out.append(self._encode_text_on_device(t))
+                if progress_cb:
+                    progress_cb(n + 1, len(texts))
+            self._encode_text_on_device("")
+            return out
+        finally:
+            self.text_encoder.to("cpu")
+            self.text_encoder = None
+            free_gpu_memory()
+
+    def _sigmas(self, n, seq_len):
+        torch = self.torch
+        u = torch.sigmoid(torch.randn(n, device=self.device))
+        if self.flux:
+            mu = self._pipe_mod.compute_empirical_mu(image_seq_len=seq_len, num_steps=50)
+        else:
+            mu = self._pipe_mod.calculate_shift(seq_len)
+        e = math.exp(mu)
+        return (e / (e + (1.0 / u.clamp(1e-4, 1 - 1e-4) - 1.0))).clamp(1e-3, 1.0)
+
+    def _predict(self, noisy, sigma, emb):
+        """Modelin hız tahmini (v = gürültü − görsel), (B, C, H, W) biçiminde."""
+        torch = self.torch
+        if self.flux:
+            pc = self._pipe_cls
+            tokens = pc._pack_latents(noisy)
+            img_ids = pc._prepare_latent_ids(noisy).to(self.device)
+            txt = emb.to(self.device, self.wdtype)
+            txt_ids = pc._prepare_text_ids(txt).to(self.device)
+            out = self.transformer(hidden_states=tokens.to(self.wdtype), timestep=sigma.to(self.wdtype), guidance=None,
+                                   encoder_hidden_states=txt, txt_ids=txt_ids, img_ids=img_ids, return_dict=False)[0]
+            b, c, h, w = noisy.shape
+            return out.permute(0, 2, 1).reshape(b, c, h, w)
+        x = [noisy[0].unsqueeze(1).to(self.wdtype)]
+        cap = [emb.to(self.device, self.wdtype)]
+        out = self.transformer(x, (1.0 - sigma).to(self.wdtype), cap, return_dict=False)[0]
+        return -torch.stack([o.float() for o in out], dim=0).squeeze(2)
+
+    def step_sft(self, lat, emb, noise=None, t=None, weight=None):
+        torch = self.torch
+        self._ensure_transformer()
+        x0 = lat.to(self.device, torch.float32)
+        if noise is None:
+            noise = torch.randn_like(x0)
+        seq = (x0.shape[2] * x0.shape[3]) if self.flux else (x0.shape[2] // 2) * (x0.shape[3] // 2)
+        sigma = self._sigmas(x0.shape[0], seq) if t is None else t.to(self.device, torch.float32)
+        s = sigma.view(-1, 1, 1, 1)
+        noisy = (1.0 - s) * x0 + s * noise
+        with self._autocast():
+            pred = self._predict(noisy, sigma, emb)
+        target = noise - x0
+        if weight is None:
+            loss = self._mse(pred, target)
+        else:
+            w = weight.to(self.device, torch.float32)
+            if w.shape[-2:] != pred.shape[-2:]:
+                w = torch.nn.functional.interpolate(w, size=pred.shape[-2:], mode="nearest")
+            err = (pred.float() - target.float()) ** 2
+            loss = (err * w).sum() / (w.sum() * err.shape[1]).clamp_min(1e-6)
+        loss.backward()
+        self._opt_step()
+        return float(loss.detach())
+
+    def step_dpo(self, *a, **k):
+        raise NotImplementedError("preference training is SD 1.5 only")
+
+    # ---- kaydet / devam et / örnek görsel
+    def lora_state(self):
+        from peft.utils import get_peft_model_state_dict
+        return get_peft_model_state_dict(self.transformer)
+
+    def save(self, out_path, info):
+        d, fn = os.path.split(out_path)
+        os.makedirs(d, exist_ok=True)
+        check_space(d, 0.5)
+        part = fn + ".part"
+        self._pipe_cls.save_lora_weights(save_directory=d, transformer_lora_layers=self.lora_state(),
+                                         weight_name=part, safe_serialization=True)
+        os.replace(os.path.join(d, part), out_path)
+        with open(os.path.splitext(out_path)[0] + ".json", "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=1)
+        return out_path
+
+    def load_state(self, path):
+        from safetensors.torch import load_file
+        from peft import set_peft_model_state_dict
+        sd = load_file(path)
+        sd = {k[len("transformer."):]: v for k, v in sd.items() if k.startswith("transformer.")}
+        res = set_peft_model_state_dict(self.transformer, sd, adapter_name="default")
+        for p in self.transformer.parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+        return res
+
+    def sample(self, prompt, negative="", seed=1234, steps=None, cfg=None, size=None):
+        torch = self.torch
+        sp = TRAIN_SPECS[self.key]
+        steps = int(steps or sp["sample_steps"])
+        cfg = float(sp["sample_cfg"] if cfg is None else cfg)
+        pos = self.encode_text(prompt)
+        neg = self.encode_text(negative or "")
+        self._ensure_transformer()
+        kwargs = dict(scheduler=self.noise_scheduler, vae=self.vae, text_encoder=None, tokenizer=self.tokenizer,
+                      transformer=self.transformer)
+        if self.flux:
+            kwargs["is_distilled"] = False
+        pipe = self._pipe_cls(**kwargs)
+        pipe.set_progress_bar_config(disable=True)
+        size = int(size or self.res)
+        self.vae.to(self.device)
+        self.transformer.eval()
+        g = torch.Generator("cpu").manual_seed(int(seed))
+        try:
+            with torch.no_grad(), self._autocast():
+                if self.flux:
+                    img = pipe(prompt_embeds=pos.to(self.device, self.wdtype),
+                               negative_prompt_embeds=neg.to(self.device, self.wdtype), num_inference_steps=steps,
+                               guidance_scale=cfg, width=size, height=size, generator=g).images[0]
+                else:
+                    img = pipe(prompt_embeds=[pos.to(self.device, self.wdtype)],
+                               negative_prompt_embeds=[neg.to(self.device, self.wdtype)], num_inference_steps=steps,
+                               guidance_scale=cfg, width=size, height=size, generator=g).images[0]
+        finally:
+            self.transformer.train()
+            self.vae.to("cpu")
+            free_gpu_memory()
+        return img
+
+    def close(self):
+        self.transformer = self.vae = self.text_encoder = None
+        self.opt = None
+        free_gpu_memory()
+
+
 class NothingToTrainError(Exception):
     """Eğitilecek veri yok (ör. hiç puan verilmemiş ve otomatik hakem kapalı)."""
 
@@ -5606,23 +6248,28 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     preset = LEARN_PRESETS[learn]
     tag = (tag or data.get("tag") or data.get("name") or slug).strip()
     trigger = ascii_trigger(tag, learn)
-    base_name = safe_folder_name(tag, learn)
+    base_name = safe_folder_name(tag, learn) + ("" if model_key == "sd15" else "_" + TRAIN_SUFFIX[model_key])
     lora_dir = own_lora_dir(paths)
     os.makedirs(lora_dir, exist_ok=True)
-    out, prev = pick_lora_path(lora_dir, base_name, slug, learn, preset["rank"])
+    out, prev = pick_lora_path(lora_dir, base_name, slug, learn, preset["rank"], base=model_key)
     name = os.path.splitext(os.path.basename(out))[0]
     hide = bool(hide_faces) and learn == "place"
     face_mode = learn == "face"
     if (hide or face_mode) and not (detector_files_ok(paths.models) and cv2_installed(paths)):
         raise RuntimeError("face detector is not installed (needed to " + ("find faces)" if face_mode else
                                                                            "hide faces)"))
-    device = train_device(hw)
+    ok, _why = train_ready(hw, model_key)
+    if not ok:
+        raise TrainVramError((model_key, TRAIN_SPECS[model_key]["vram"], hw.vram_gb if hw.cuda_usable else 0.0))
+    if TRAIN_SPECS[model_key].get("base_repo") and not is_train_base_installed(paths.models, model_key):
+        raise RuntimeError("training base model is not installed: " + model_key)
+    device = train_device(hw) if model_key == "sd15" else hw.device
     log(msg("tr_log_load", device="GPU" if device != "cpu" else "CPU"))
     log(msg("tr_log_kind", kind=msg("learn_" + learn)))
+    log(msg("tr_log_base", base=model["name"]))
     if name != base_name and os.path.exists(os.path.join(lora_dir, base_name + ".safetensors")):
         log(msg("tr_log_keep_old", old=base_name + ".safetensors", new=name + ".safetensors"))
-    trainer = LoraTrainer(image_model_dir(paths.models, model), model, device, rank=preset["rank"], lr=preset["lr"],
-                          resolution=resolution)
+    trainer = make_trainer(paths, model_key, device, rank=preset["rank"], lr=preset["lr"], resolution=resolution)
     trainer.noise_offset = preset["noise_offset"]
     if prev:
         try:

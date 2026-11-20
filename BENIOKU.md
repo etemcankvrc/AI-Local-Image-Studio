@@ -12,6 +12,24 @@
   - Çıkarılan dosyalar silinmez, veri setinin `excluded` klasörüne taşınır. Kendi klasörünüzden bağlantı olarak eklenen dosyalara hiç dokunulmaz, yalnızca veri setinden çıkarılır.
   - Algılama ek model indirmez; görüntünün ortasındaki düz, tam boy sınırlara ve tek renkli ayırıcı şeritlere bakar. Tuğla, fayans gibi desenler kolaj sayılmaz. Nadiren yanılabilir; bu yüzden dosya adları gösterilir ve karar size bırakılır.
 
+## v1.3.1'de yeni — eğitim modelini sen seçersin
+
+- Derin modda **Model** seçimi eklendi. LoRA bir modelin iç yapısına göre öğrenildiği için yalnızca o model ailesinde çalışır; artık hangisi için eğitileceğini sen seçiyorsun:
+
+| Model | Gereken | Not |
+|---|---|---|
+| SD 1.5 | 4 GB VRAM ya da CPU | Kendi eklediğin SD 1.5 modelleriyle de çalışır |
+| SDXL | ≥ 10 GB VRAM | 1024 px'te eğitir |
+| FLUX.2 [klein] 4B | ≥ 12 GB VRAM | *klein base 4B* üzerinde eğitilir (bir kez ~7.8 GB, Apache-2.0), hızlı FLUX.2 ile kullanılır |
+| Z-Image | ≥ 16 GB VRAM | *Z-Image base* üzerinde eğitilir (bir kez ~12.3 GB, Apache-2.0), Z-Image-Turbo ile kullanılır |
+
+  - Ekran kartına sığmayan seçenek ⛔ ile gösterilir ve başlatılmaz (çökme yok). Eğitim sırasında bellek yetmezse daha düşük çözünürlükle yeniden denenir.
+  - Base modelden yalnızca dönüştürücü indirilir; VAE ve metin kodlayıcı kurulu modelden alınır. Metin kodlayıcı metinler okunduktan sonra bellekten silinir, böylece FLUX.2 eğitimi 12 GB'a sığar.
+  - Her modelin LoRA'sı ayrı dosyaya kaydedilir (`ad_sdxl`, `ad_flux2`, `ad_zimage`); aynı veri setiyle farklı modellerde eğitim birbirini ezmez.
+- **LoRA uyumluluğu artık ağırlıklara bakılarak belirleniyor.** Önceden FLUX.1, Wan (video), Qwen-Image gibi başka modellerin LoRA'ları FLUX.2 / Z-Image için "uygun" görünebiliyordu. Şimdi FLUX.2 4B, FLUX.2 9B/dev, FLUX.1, Z-Image, Wan ve Qwen-Image LoRA'ları ayrılıyor; uymayanlar "Bu modele uyanlar" filtresinde gizleniyor.
+- **LoRA çökmesi düzeltildi:** modelde karşılığı olmayan bir LoRA artık işi durdurmuyor; atlanıp log'a yazılıyor.
+- **RAM:** Windows için ayrılan %20 sabit pay kaldırıldı (bkz. üstte).
+
 ## v1.3.1'de yeni — kendi modelin
 
 - Civitai, Hugging Face ya da başka bir yerden indirdiğin **tek dosyalık SD 1.5 / SDXL modellerini** (`.safetensors`) `addons\models\` klasörüne koy. Model listesinde **📦 ad [SD 1.5]** gibi görünür.

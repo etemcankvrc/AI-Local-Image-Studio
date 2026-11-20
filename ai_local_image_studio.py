@@ -392,9 +392,9 @@ EN = {
     "v2_sec_analysis": "4. Analysis & learning",
     "v2_mode": "Mode:",
     "v2_mode_light": "Light — word card (fast)",
-    "v2_mode_deep": "Deep — LoRA training (SD 1.5)",
+    "v2_mode_deep": "Deep — LoRA training",
     "v2_mode_light_info": "Reads the images and saves the {what} features they share as a word card; works with every image model.",
-    "v2_mode_deep_info": "Trains a {what} LoRA on your images (SD 1.5; runs on 4 GB VRAM). {extra} It can also learn a person's face — use real people only with their consent (or yourself).",
+    "v2_mode_deep_info": "Trains a {what} LoRA on your images ({base}). {extra} It can also learn a person's face — use real people only with their consent (or yourself).",
     "v2_duration": "Duration:",
     "v2_until_stop": "Until I stop it",
     "v2_minutes": "Time limit",
@@ -644,6 +644,19 @@ EN = {
     "custom_cfg_name": "Settings files for {base} (no model weights)",
     "log_custom_cfg": "Downloading the small settings files for {base} (structure, scheduler, tokenizer — no weights)…",
     "log_ram_tight": "ℹ️ The model needs more than the RAM that is free right now — Windows frees cached memory and uses the page file, so loading may take a little longer.",
+    "v2_base": "Model:",
+    "v2_base_any": "4 GB+ or CPU",
+    "v2_base_need": "≥ {gb:.0f} GB VRAM",
+    "v2_base_note_sd15": "The LoRA works with SD 1.5 and your own SD 1.5 models.",
+    "v2_base_note_sdxl": "Trains at 1024 px. The LoRA works with SDXL and your own SDXL models.",
+    "v2_base_note_flux2_klein_4b": "Trains on FLUX.2 [klein] base 4B (downloaded once, ~7.8 GB, Apache-2.0); the LoRA is used with the fast FLUX.2 [klein] 4B.",
+    "v2_base_note_zimage_turbo": "Trains on Z-Image base (downloaded once, ~12.3 GB, Apache-2.0); the LoRA is used with Z-Image-Turbo (raise its weight to 1.2–1.5 if the effect is weak).",
+    "v2_base_vram": "⛔ {name} training needs at least {need:.0f} GB of VRAM on an NVIDIA card (this PC: {have:.1f} GB).",
+    "v2_base_vram_q": "{name} training needs at least {need:.0f} GB of graphics memory on an NVIDIA card; this PC has {have:.1f} GB.\n\nIt would not finish here, so it is not started. Choose SD 1.5 (works with 4 GB) — or train on a PC with a bigger card and copy the LoRA file into the loras folder.",
+    "train_base_item": "{name} — for training only (transformer), {lic}",
+    "tr_log_base": "Training model: {base}",
+    "tr_log_oom_res": "⚠️ Not enough graphics memory — trying again at {res} px…",
+    "tr_log_oom_final": "❌ Not enough graphics memory even at the lowest resolution. Close other programs that use the GPU (games, video in the browser) or choose a smaller training model.",
     "log_custom_missing": "The model file is no longer there: {path}",
 }
 
@@ -804,7 +817,7 @@ def load_settings(paths):
         v2.update({k: v for k, v in s["v2"].items() if k in V2_DEFAULTS})
     if v2.get("mode") not in ("light", "deep", "self"):
         v2["mode"] = "light"
-    if v2.get("base_model") not in core.IMAGE_MODEL_BY_KEY:
+    if v2.get("base_model") not in core.TRAIN_BASES:
         v2["base_model"] = "sd15"
     if v2.get("duration") not in ("until_stop", "minutes"):
         v2["duration"] = "until_stop"
@@ -1640,10 +1653,19 @@ class StyleStudioWindow:
             tk.Label(b, text=t(key), bg=BG, fg=TXT, font=f.b9, anchor="w").grid(row=row, column=0, sticky="w",
                                                                               pady=3, padx=(0, 8))
         lab(0, "v2_mode")
-        kc = KeyCombo(b, self.v_mode, lambda: [("light", t("v2_mode_light")), ("deep", t("v2_mode_deep")),
-                                               ("self", t("v2_mode_self"))], width=34)
-        kc.cb.grid(row=0, column=1, sticky="w")
+        mf = tk.Frame(b, bg=BG)
+        mf.grid(row=0, column=1, sticky="w")
+        kc = KeyCombo(mf, self.v_mode, lambda: [("light", t("v2_mode_light")), ("deep", t("v2_mode_deep")),
+                                                ("self", t("v2_mode_self"))], width=30)
+        kc.cb.pack(side="top", anchor="w")
         self.combos.append(kc)
+        bf = tk.Frame(mf, bg=BG)
+        bf.pack(side="top", anchor="w", pady=(3, 0))
+        self.lbl_base = tk.Label(bf, text=t("v2_base"), bg=BG, fg=TXT, font=f.b9)
+        self.lbl_base.pack(side="left", padx=(0, 4))
+        self.kc_base = KeyCombo(bf, self.v_base, self._base_items, width=34)
+        self.kc_base.cb.pack(side="left")
+        self.combos.append(self.kc_base)
         self.lbl_mode = self._note(b, wrap=560)
         self.lbl_mode.grid(row=1, column=1, sticky="w")
         lab(2, "v2_captions")
@@ -1780,6 +1802,17 @@ class StyleStudioWindow:
                 self.app.log(t("v2_log_learn", name=data.get("name", slug), kind=t("learn_" + learn)))
         self.update_state()
 
+    def _base_items(self):
+        """Eğitim modelleri: ad, gereken VRAM ve bu bilgisayarda çalışıp çalışmayacağı."""
+        out = []
+        for k in core.TRAIN_BASES:
+            m = core.IMAGE_MODEL_BY_KEY[k]
+            sp = core.TRAIN_SPECS[k]
+            ok, _ = core.train_ready(self.app.hw, k)
+            need = t("v2_base_any") if sp["cpu_ok"] else t("v2_base_need", gb=sp["vram"])
+            out.append((k, f"{'✔' if ok else '⛔'} {m['name']}  ({need})"))
+        return out
+
     def update_state(self):
         if not self.alive():
             return
@@ -1806,15 +1839,26 @@ class StyleStudioWindow:
         learn = core.norm_learn(self.v_learn.get())
         what = t("learn_what_" + learn)
         gpu = core.train_device(hw) != "cpu"
+        base = self.v_base.get() if self.v_base.get() in core.TRAIN_BASES else "sd15"
+        base_ok, _ = core.train_ready(hw, base)
         if mode == "deep":
-            self.lbl_mode.config(text=t("v2_mode_deep_info", what=what, extra=t("v2_deep_note_" + learn)) + "  " +
-                                 (t("fit_ok") if gpu else t("fit_slow")), fg=GREEN if gpu else WARN)
+            if base != "sd15":
+                gpu = base_ok
+            note = t("v2_base_note_" + base)
+            if not base_ok:
+                note += "  " + t("v2_base_vram", name=core.IMAGE_MODEL_BY_KEY[base]["name"],
+                                 need=core.TRAIN_SPECS[base]["vram"], have=hw.vram_gb if hw.cuda_usable else 0.0)
+            self.lbl_mode.config(text=t("v2_mode_deep_info", what=what, extra=t("v2_deep_note_" + learn),
+                                        base=core.IMAGE_MODEL_BY_KEY[base]["name"]) + "  " + note + "  " +
+                                 (t("fit_ok") if gpu else (t("fit_slow") if base == "sd15" else "")),
+                                 fg=GREEN if gpu else (WARN if base == "sd15" else RED))
         elif mode == "self":
             self.lbl_mode.config(text=t("v2_mode_self_info") + "  " + (t("fit_ok") if gpu else t("fit_slow")),
                                  fg=GREEN if gpu else WARN)
         else:
             self.lbl_mode.config(text=t("v2_mode_light_info", what=what) + "  " + t("fit_ok"), fg=GREEN)
         self.kc_learn.cb.config(state="disabled" if busy else "readonly")
+        self.kc_base.cb.config(state="readonly" if (mode == "deep" and not busy) else "disabled")
         self.chk_hide.config(state="normal" if (learn == "place" and mode == "deep" and not busy) else "disabled")
         self.chk_judge.config(state="normal" if mode == "self" else "disabled")
         self.b_caption.state(["!disabled"] if (has_ds and not busy) else ["disabled"])
@@ -2141,6 +2185,13 @@ class StyleStudioWindow:
         if need_cap and not self.app.captioner_ok(parent=self.w):
             need_cap = False
         train = mode in ("deep", "self")
+        base = self.v_base.get() if (mode == "deep" and self.v_base.get() in core.TRAIN_BASES) else "sd15"
+        if mode == "deep" and not core.train_ready(self.app.hw, base)[0]:
+            hw = self.app.hw
+            messagebox.showinfo(APP_NAME, t("v2_base_vram_q", name=core.IMAGE_MODEL_BY_KEY[base]["name"],
+                                            need=core.TRAIN_SPECS[base]["vram"],
+                                            have=hw.vram_gb if hw.cuda_usable else 0.0), parent=self.w)
+            return
         if mode == "deep" and learn == "face" and not data.get("face_ok"):
             # Yüz modu bir kişinin görünüşünü öğrenir: veri seti başına bir kez izin sorulur.
             if not messagebox.askyesno(APP_NAME, t("v2_face_consent_q"), parent=self.w):
@@ -2150,15 +2201,16 @@ class StyleStudioWindow:
         # Mekân (yüzleri gizlemek) ve Yüz (yüzü bulmak) için yüz algılayıcı (Yüz ve El Düzeltici ile aynı, ~50 MB)
         hide = mode == "deep" and learn == "place" and self.v2.get("hide_faces", True)
         need_det = hide or (mode == "deep" and learn == "face")
-        plan = self.app._plan(engine=True, model=core.IMAGE_MODEL_BY_KEY["sd15"] if train else None,
-                              peft=train, captioner=need_cap, detailer=need_det)
+        plan = self.app._plan(engine=True, model=core.IMAGE_MODEL_BY_KEY[base] if train else None,
+                              peft=train, captioner=need_cap, detailer=need_det,
+                              train_base=base if mode == "deep" else None)
         if plan is None:
             return
         opts = {"minutes": self.v2["minutes"] if self.v2["duration"] == "minutes" else None,
                 "checkpoint": self.v2["checkpoint"], "sample": self.v2["sample_each"], "judge": self.v2["auto_judge"],
                 "caption": need_cap, "tag": (data or {}).get("tag") or (data or {}).get("name") or slug,
                 "llm": (self.app.v_llm_host.get(), self.app.v_llm.get()), "outdir": self.app.v_outdir.get(),
-                "hide_faces": hide, "need_detector": need_det}
+                "hide_faces": hide, "need_detector": need_det, "base": base}
         self.app.start_job("analysis", self.job_analysis, mode, slug, plan, opts)
         self.update_state()
 
@@ -2178,11 +2230,22 @@ class StyleStudioWindow:
             if not plan.get("engine"):
                 raise JobFail()
             app._install_engine()
+        base = opts.get("base") or "sd15"
         if mode in ("deep", "self"):
-            if not core.is_image_model_installed(app.paths.models, m15):
+            mb = core.IMAGE_MODEL_BY_KEY[base] if mode == "deep" else m15
+            if not core.is_image_model_installed(app.paths.models, mb):
                 if not plan.get("model"):
                     raise JobFail()
-                app._download_image_model(m15)
+                app._download_image_model(mb)
+            if mode == "deep" and not core.is_train_base_installed(app.paths.models, base):
+                if not plan.get("train_base"):
+                    raise JobFail()
+                sp = core.TRAIN_SPECS[base]
+                app.status("status_download")
+                app.log(t("log_download_start", name=sp["base_name"], size=f"~{sp['base_gb']:.1f} GB",
+                          path=core.train_base_dir(app.paths.models, base)))
+                core.download_train_base(app.paths.models, base, app.bytes_progress, app.abort)
+                app.log(t("log_download_done", name=sp["base_name"]))
             if not app._ensure_peft(plan):
                 raise JobFail()
         want_cap = mode == "caption" or opts.get("caption")
@@ -2210,7 +2273,8 @@ class StyleStudioWindow:
                 app.status("status_install")
                 core.install_detector(app.paths, app.log, t, app.bytes_progress, app.abort)
             self._train(core.run_style_training, slug=slug, tag=opts["tag"], minutes=opts["minutes"],
-                        checkpoint_min=opts["checkpoint"], sample_each=opts["sample"], hide_faces=hide)
+                        checkpoint_min=opts["checkpoint"], sample_each=opts["sample"], hide_faces=hide,
+                        model_key=base)
         else:
             pool = core.collect_prompt_pool(app.paths, opts["outdir"])
             self._train(core.run_preference_training, minutes=opts["minutes"], checkpoint_min=opts["checkpoint"],
@@ -2297,7 +2361,9 @@ class StyleStudioWindow:
 
         info = None
         wd = core.RamWatchdog(app.abort, app.hw.ram_total_gb)
-        for res in (None, 384):
+        base = kw.get("model_key") or "sd15"
+        tries = (None,) + tuple(core.TRAIN_SPECS[base]["fallback"])
+        for n_try, res in enumerate(tries):
             try:
                 with wd:
                     info = fn(app.paths, app.hw, log_cb=app.log, msg=t, progress_cb=prog, abort_event=app.abort,
@@ -2306,16 +2372,24 @@ class StyleStudioWindow:
             except core.NothingToTrainError:
                 app.log(t("tr_log_nothing"))
                 raise JobFail()
+            except core.TrainVramError as e:
+                key, need, have = e.args[0]
+                app.log(t("v2_base_vram", name=core.IMAGE_MODEL_BY_KEY[key]["name"], need=need, have=have))
+                raise JobFail()
             except core.AbortedError:
                 if wd.triggered:
                     app.log(t("log_ram_guard", free=wd.free_at_trigger))
                     raise core.AbortedError("ram")
                 raise
             except Exception as e:
-                if res is None and core.is_oom_error(e):
+                if n_try + 1 < len(tries) and core.is_oom_error(e):
                     core.free_gpu_memory()
-                    app.log(t("tr_log_oom"))
+                    app.log(t("tr_log_oom_res", res=tries[n_try + 1]))
                     continue
+                if core.is_oom_error(e):
+                    core.free_gpu_memory()
+                    app.log(t("tr_log_oom_final"))
+                    raise JobFail()
                 raise
         if wd.triggered:
             app.log(t("log_ram_guard", free=wd.free_at_trigger))
@@ -3608,7 +3682,7 @@ class ImageStudio:
 
     # ------------------------------------------------------------- download plan (UI thread)
     def _plan(self, engine=False, model=None, upscaler=False, llm=None, detailer=False, peft=False, captioner=False,
-              cv2=False):
+              cv2=False, train_base=None):
         """Neyin indirileceğini listeler ve TEK bir onay ister. Dönüş: plan sözlüğü ya da None (iptal)."""
         items, plan = [], {}
         if engine and not core.engine_status(self.paths):
@@ -3629,6 +3703,11 @@ class ImageStudio:
         elif model and not core.is_image_model_installed(self.paths.models, model):
             items.append((model["name"], f"~{model['size_gb']:.1f} GB", os.path.join(self.paths.models, "image")))
             plan["model"] = True
+        if train_base and not core.is_train_base_installed(self.paths.models, train_base):
+            sp = core.TRAIN_SPECS[train_base]
+            items.append((t("train_base_item", name=sp["base_name"], lic=sp["license"]), f"~{sp['base_gb']:.1f} GB",
+                          core.train_base_dir(self.paths.models, train_base)))
+            plan["train_base"] = True
         if upscaler and not core.is_upscaler_installed(self.paths.models):
             items.append((core.UPSCALER["name"], core.UPSCALER["size"], os.path.join(self.paths.models, "upscale")))
             plan["upscaler"] = True
@@ -5069,6 +5148,9 @@ class ImageStudio:
             lines.append(f"• {m['name']}  ({m['repo']}) — {m['license']}")
         for m in core.LLM_MODELS:
             lines.append(f"• {m['name']}  (Ollama: {m['key']}) — {m['license']}")
+        for k, sp in core.TRAIN_SPECS.items():
+            if sp.get("base_repo"):
+                lines.append(f"• {sp['base_name']}  ({sp['base_repo']}, training) — {sp['license']}")
         lines.append(f"• {core.UPSCALER['name']} (xinntao/Real-ESRGAN) — {core.UPSCALER['license']}")
         lines.append("• YuNet face detector (opencv/opencv_zoo) — MIT")
         lines.append("• MediaPipe palm detector (opencv/opencv_zoo, Google) — Apache-2.0")

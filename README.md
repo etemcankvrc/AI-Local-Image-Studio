@@ -25,8 +25,11 @@ your own language into English prompts. The interface is available in **English,
   - Choose **what to teach**: 🎨 style, 🏙️ place / city, 🧸 subject / object / character, 🧍 human anatomy / pose,
     👤 face. Each type trains differently. In *place* mode faces are blurred and not learned, so the surroundings
     come first; in *face* mode only the face is learned.
-  - **Light** mode saves a word card; **deep** mode trains a LoRA (SD 1.5, runs on 4 GB VRAM); **self-learning**
-    learns from your 👍 / 👎 ratings and an automatic judge (Diffusion-DPO).
+  - **Light** mode saves a word card; **deep** mode trains a LoRA on the model you choose: **SD 1.5** (4 GB VRAM or
+    CPU), **SDXL** (≥ 10 GB), **FLUX.2 [klein] 4B** (≥ 12 GB; trained on the Apache-2.0 *klein base 4B*, used with
+    the fast model) or **Z-Image** (≥ 16 GB; trained on the Apache-2.0 *Z-Image base*, used with Z-Image-Turbo).
+    Choices that don't fit the GPU are marked and never started; out-of-memory retries at a lower resolution.
+    **Self-learning** learns from your 👍 / 👎 ratings and an automatic judge (Diffusion-DPO, SD 1.5).
 - **Your own models:** drop a single-file SD 1.5 or SDXL model (`.safetensors`, e.g. from Civitai or Hugging Face)
   into `addons\models\` and it appears in the model list as 📦. The program never downloads them; `.ckpt` / `.pt`
   files are never opened (they can contain code). The first time, it needs either the matching built-in model or a
@@ -79,6 +82,8 @@ Models and third-party components are downloaded separately and keep their own l
 | Stable Diffusion XL 1.0 | CreativeML OpenRAIL++-M |
 | Z-Image-Turbo | Apache-2.0 |
 | FLUX.2 [klein] 4B | Apache-2.0 |
+| FLUX.2 [klein] base 4B (training only) | Apache-2.0 |
+| Z-Image base (training only) | Apache-2.0 |
 | Qwen3 / Qwen2.5 (via Ollama) | Apache-2.0 |
 | Real-ESRGAN x2plus | BSD-3-Clause |
 | OpenCV (incl. its LGPL FFmpeg build) | Apache-2.0 (+ LGPL-2.1) |
