@@ -4201,7 +4201,7 @@ WEB_MAX_PER_BATCH = 500
 WEB_MAX_MB = 25
 WEB_MIN_DELAY = 1.0
 # Wikimedia vb. sunucular, kim olduğunu ve iletişim adresini söyleyen bir User-Agent ister.
-APP_UA = "AILocalImageStudio/1.4.2 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
+APP_UA = "AILocalImageStudio/1.4.3 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
 
 # Openverse (WordPress): Wikimedia, Flickr, müzeler vb. kaynaklardaki AÇIK LİSANSLI görsellerde arama.
 # Anahtarsız kullanım sınırları (Openverse kaynak kodundaki varsayılanlar): sayfa başına en fazla 20 sonuç,
@@ -4512,6 +4512,163 @@ def _trim_flat_edges(g, max_frac=0.03, flat=3.0):
     return left, top, right, bottom
 
 
+def _line_candidates(a, min_cov=0.3, lo=0.15, hi=0.85):
+    """Gevşek ölçüt: tam boy, düz ve tek piksellik sınır adayları (satır numaraları). a: gri dizi."""
+    import numpy as np
+    H, W = a.shape
+    if H < 40 or W < 20:
+        return []
+    d = np.zeros((H, W), np.float32)
+    d[1:-1] = np.abs(a[2:] - a[:-2])
+    cov = (d > COLLAGE_EDGE * 0.75).mean(axis=1)
+    out = []
+    for y in range(max(9, int(H * lo)), min(H - 9, int(H * hi))):
+        c = float(cov[y])
+        if c < min_cov:
+            continue
+        nb = np.r_[cov[max(0, y - 12):max(0, y - 3)], cov[y + 4:y + 13]]
+        if nb.size and c - float(nb.max()) >= 0.18 and c >= float(cov[y - 1:y + 2].max()):
+            out.append(y)
+    return out
+
+
+def _complete_grid(a, boxes):
+    """
+    Satırlara (ya da sütunlara) bölünmüş bir kolajda her satırda AYNI yerde düz bir dikey sınır varsa orayı da keser.
+    Seri çekim gibi birbirine çok benzeyen karelerde (2×2 ızgara) orta dikiş tek başına zayıf kalır; ama her satırda
+    aynı x'te çıkması güçlü bir işarettir. boxes: küçük görüntü koordinatları (x0, y0, x1, y1).
+    """
+    import numpy as np
+    H, W = a.shape
+    for axis in ("rows", "cols"):
+        if axis == "rows":
+            if not all(b[0] <= 1 and b[2] >= W - 1 for b in boxes):
+                continue
+            subs = [a[b[1]:b[3], :].T for b in boxes]          # dikey sınırlar = devrik görüntüde satırlar
+            length = W
+        else:
+            if not all(b[1] <= 1 and b[3] >= H - 1 for b in boxes):
+                continue
+            subs = [a[:, b[0]:b[2]] for b in boxes]
+            length = H
+        cand = [_line_candidates(np.ascontiguousarray(sb)) for sb in subs]
+        if not cand or not all(cand):
+            continue
+        common = []
+        for p in cand[0]:
+            if all(any(abs(p - q) <= 2 for q in other) for other in cand[1:]):
+                if not common or p - common[-1] > 3:
+                    common.append(p)
+        # ızgara düzeni: parçalar çok küçük olmasın, en fazla 3 kesim
+        common = [p for p in common if length * 0.15 <= p <= length * 0.85][:3]
+        if not common:
+            continue
+        cuts = [0] + common + [length]
+        if min(b - a_ for a_, b in zip(cuts, cuts[1:])) < length * 0.15:
+            continue
+        out = []
+        for b in boxes:
+            for c0, c1 in zip(cuts, cuts[1:]):
+                c0 = c0 + (1 if c0 else 0)
+                if axis == "rows":
+                    out.append((c0, b[1], c1, b[3]))
+                else:
+                    out.append((b[0], c0, b[2], c1))
+        if axis == "rows":
+            out.sort(key=lambda r: (r[1], r[0]))
+        return out
+    return _complete_partial(a, boxes)
+
+
+def _complete_partial(a, boxes):
+    """Yarım kalmış ızgara: bir satır (sütun) kesildi, komşusu kesilmedi. Komşuda aynı yerde düz bir sınır varsa keser."""
+    import numpy as np
+    xs = sorted({b[0] for b in boxes if b[0] > 1})
+    ys = sorted({b[1] for b in boxes if b[1] > 1})
+    out = []
+    for b in boxes:
+        x0, y0, x1, y1 = b
+        w, h = x1 - x0, y1 - y0
+        done = False
+        for e in xs:
+            if x0 + w * 0.15 <= e <= x1 - w * 0.15:
+                cand = _line_candidates(np.ascontiguousarray(a[y0:y1, x0:x1].T), lo=0.1, hi=0.9)
+                if any(abs((x0 + q) - e) <= 2 for q in cand):
+                    q = min(cand, key=lambda q: abs((x0 + q) - e))
+                    out += [(x0, y0, x0 + q, y1), (x0 + q + 1, y0, x1, y1)]
+                    done = True
+                    break
+        if not done:
+            for e in ys:
+                if y0 + h * 0.15 <= e <= y1 - h * 0.15:
+                    cand = _line_candidates(np.ascontiguousarray(a[y0:y1, x0:x1]), lo=0.1, hi=0.9)
+                    if any(abs((y0 + q) - e) <= 2 for q in cand):
+                        q = min(cand, key=lambda q: abs((y0 + q) - e))
+                        out += [(x0, y0, x1, y0 + q), (x0, y0 + q + 1, x1, y1)]
+                        done = True
+                        break
+        if not done:
+            out.append(b)
+    out.sort(key=lambda r: (r[1], r[0]))
+    return out
+
+
+def collage_boxes(img, min_side=256):
+    """
+    Kesilecek kareler (görselin kendi pikselleriyle). Önizleme, sayım ve kesim hep bunu kullanır, böylece gösterilen
+    kutular ile gerçekte kesilenler aynıdır. Kare hâlâ kolaj gibiyse bir kez daha bölünür.
+    """
+    mp = max(64, int(min_side or 0))
+    panels = collage_panels(img, min_px=mp)
+    final = []
+    for (x0, y0, x1, y1) in panels:
+        sub = img.crop((x0, y0, x1, y1))
+        inner = collage_panels(sub, min_px=mp) if _collage_img(sub) else []
+        final += [(x0 + a, y0 + b, x0 + c, y0 + d) for a, b, c, d in inner] if inner else [(x0, y0, x1, y1)]
+    # tek kare kaldıysa (öbür parça çok küçük olduğu için atıldı) bu bir kesim değildir
+    return final if len(final) >= 2 else []
+
+
+def collage_grid_boxes(img, rows, cols, min_side=0):
+    """
+    Elle bölme: görseli rows × cols eşit parçaya ayırır; her kesim ±%15 içinde en yakın düz sınıra (dikişe) oturtulur,
+    ayırıcı şeritler kırpılır. Dönüş: kutular (asıl piksellerle), okuma sırasına göre.
+    """
+    import numpy as np
+    from PIL import Image
+    img = img.convert("RGB")
+    W, H = img.size
+    s = min(1.0, float(COLLAGE_SIDE) / max(W, H))
+    small = img.convert("L")
+    if s < 1:
+        small = small.resize((max(1, round(W * s)), max(1, round(H * s))), Image.BOX)
+    a = np.asarray(small, dtype=np.float32)
+    g_full = np.asarray(img.convert("L"), dtype=np.float32)
+
+    def cuts(n, arr, length_full):
+        L = arr.shape[0]
+        cand = _line_candidates(np.ascontiguousarray(arr), min_cov=0.25, lo=0.05, hi=0.95) if n > 1 else []
+        out = []
+        for k in range(1, n):
+            want = L * k / n
+            near = [q for q in cand if abs(q - want) <= L * 0.15 / max(1, n - 1)]
+            q = min(near, key=lambda q: abs(q - want)) if near else want
+            out.append(int(round(q / s)))
+        return [0] + out + [length_full]
+    ys = cuts(rows, a, H)
+    xs = cuts(cols, np.ascontiguousarray(a.T), W)
+    boxes = []
+    for y0, y1 in zip(ys, ys[1:]):
+        for x0, x1 in zip(xs, xs[1:]):
+            if x1 - x0 < 8 or y1 - y0 < 8:
+                continue
+            l, t, r, b = _trim_flat_edges(g_full[y0:y1, x0:x1])
+            bx = (x0 + l, y0 + t, x0 + r, y0 + b)
+            if min(bx[2] - bx[0], bx[3] - bx[1]) >= max(16, int(min_side or 0) // 2):
+                boxes.append(bx)
+    return boxes
+
+
 def collage_panels(img, min_px=128, max_depth=3):
     """
     Kolajı karelerine ayırır: [(sol, üst, sağ, alt), ...] — görselin kendi pikselleriyle, okuma sırasına göre.
@@ -4555,6 +4712,7 @@ def collage_panels(img, min_px=128, max_depth=3):
     boxes = split(0, 0, sw_, sh_, 0)
     if len(boxes) < 2:
         return []
+    boxes = _complete_grid(a, boxes)
     panels = []
     for x0, y0, x1, y1 in boxes:
         X0, Y0 = int(round(x0 / s)), int(round(y0 / s))
@@ -4572,10 +4730,12 @@ def collage_panels(img, min_px=128, max_depth=3):
     return panels
 
 
-def split_collage_items(paths, slug, files, min_side=256, progress_cb=None, abort_event=None):
+def split_collage_items(paths, slug, files, min_side=256, progress_cb=None, abort_event=None, boxes=None):
     """
     Kolaj öğelerini karelerine böler: her kare veri setine ayrı görsel olarak eklenir (veri setinin adıyla), asıl
     görsel 'excluded' klasörüne taşınır (silinmez; bağlantılı dosyaya dokunulmaz).
+    boxes: {dosya: [(x0, y0, x1, y1), ...]} — kullanıcının seçtiği kareler (önizlemede gösterilenlerin alınanları).
+    Verilmezse kareler collage_boxes ile bulunur. Boş liste: hiçbir kare alınmaz, asıl görsel yalnızca çıkarılır.
     Dönüş: {"split": bölünen, "new": yeni görsel, "failed": [bölünemeyen dosyalar]}.
     """
     import io
@@ -4584,30 +4744,29 @@ def split_collage_items(paths, slug, files, min_side=256, progress_cb=None, abor
     if not data:
         return {"split": 0, "new": 0, "failed": list(files)}
     want = set(files)
+    boxes = boxes or {}
     hashes = {i.get("sha1") for i in data["items"]}
     done, failed, new = [], [], 0
     todo = [it for it in list(data["items"]) if it.get("file") in want]
     for n, it in enumerate(todo):
         if abort_event is not None and abort_event.is_set():
             raise AbortedError("user")
+        chosen = boxes.get(it.get("file"))
         try:
             with Image.open(dataset_item_path(paths, slug, it)) as im:
                 im.load()
                 fmt = (im.format or "PNG").upper()
                 img = im.convert("RGBA" if (fmt == "PNG" and "A" in im.getbands()) else "RGB")
-            panels = collage_panels(img, min_px=max(64, int(min_side or 0)))
+            if chosen is not None:
+                panels = [tuple(int(v) for v in b) for b in chosen
+                          if 0 <= b[0] < b[2] <= img.width and 0 <= b[1] < b[3] <= img.height]
+            else:
+                panels = collage_boxes(img, min_side)
         except Exception:
             panels = []
-        if not panels:
+        if not panels and chosen is None:
             failed.append(it.get("file"))
             continue
-        # kare hâlâ kolaj gibiyse (ör. içinde gözden kaçan bir dikiş) bir kez daha bölünür
-        final = []
-        for (x0, y0, x1, y1) in panels:
-            sub = img.crop((x0, y0, x1, y1))
-            inner = collage_panels(sub, min_px=max(64, int(min_side or 0))) if _collage_img(sub) else []
-            final += [(x0 + a, y0 + b, x0 + c, y0 + d) for a, b, c, d in inner] if inner else [(x0, y0, x1, y1)]
-        panels = final
         added = 0
         for (x0, y0, x1, y1) in panels:
             crop = img.crop((x0, y0, x1, y1))
@@ -4635,16 +4794,23 @@ def split_collage_items(paths, slug, files, min_side=256, progress_cb=None, abor
     return {"split": len(done), "new": new, "failed": failed}
 
 
-def collage_preview(path, max_side=220, min_side=256):
-    """Önizleme: küçük görsel + kesim çizgileri (kırmızı kutular). Kesimle aynı en küçük kare boyutu kullanılır, böylece
-    gösterilen kare sayısı gerçekte eklenecek sayıyla aynıdır. Dönüş: (PIL görsel, kare sayısı)."""
-    from PIL import Image, ImageDraw
+def collage_preview_data(path, max_side=200, min_side=256):
+    """Önizleme için: (küçük görsel, kutular (asıl piksellerle), ölçek). Kutular kesimde aynen kullanılır."""
+    from PIL import Image
     with Image.open(path) as im:
         im.load()
         img = im.convert("RGB")
-    panels = collage_panels(img, min_px=max(64, int(min_side or 0)))
+    bx = collage_boxes(img, min_side)
     s = min(1.0, float(max_side) / max(img.size))
     th = img.resize((max(1, int(img.width * s)), max(1, int(img.height * s))), Image.BILINEAR)
+    return th, bx, s
+
+
+def collage_preview(path, max_side=220, min_side=256):
+    """Önizleme: küçük görsel + kesim çizgileri (kırmızı kutular). Kesimle aynı kareler kullanılır, böylece
+    gösterilen kare sayısı gerçekte eklenecek sayıyla aynıdır. Dönüş: (PIL görsel, kare sayısı)."""
+    from PIL import ImageDraw
+    th, panels, s = collage_preview_data(path, max_side, min_side)
     d = ImageDraw.Draw(th)
     for x0, y0, x1, y1 in panels:
         d.rectangle([x0 * s, y0 * s, x1 * s - 1, y1 * s - 1], outline=(255, 60, 60), width=2)

@@ -1,8 +1,19 @@
-# 🎨 AI Local Image Studio v1.4.2
+# 🎨 AI Local Image Studio v1.4.3
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.3'te yeni — kolajda her görsel ve her kare için sen karar verirsin
+
+- Kolaj penceresinde artık her görselin kendi seçimi var:
+  - **Kareye tıkla:** o kare alınmaz (gri ✕); tekrar tıkla, geri alınır. Örn. ikiye bölünmüş bir görselden yalnızca birini al.
+  - **Görselin altındaki düğme:** ✂ Kes → 🖼 Kesme (tek görsel olarak kalsın) → ✕ Çıkar.
+  - **Elle bölme:** kesim yanlışsa ya da hiç bulunamadıysa ┃ 2 (yan yana), ━ 2 (üst üste), ╋ 4 (2×2), ━ 3 (üst üste); ↺ otomatiğe döner. Elle kesim en yakın düz dikişe oturtulur.
+  - Altta sonuç canlı görünür: "N yeni görsel • N kesilmeden kalır • N çıkarılır". **✂ Seçtiğim gibi uygula** ile uygulanır. "Hepsini çıkar" / "Hepsi kesilmeden kalsın" tek tıkla hepsine.
+- **2×2 ızgaralar daha iyi bulunuyor:** seri çekim gibi birbirine çok benzeyen karelerde orta dikiş zayıf kaldığı için 4 yerine 2 kare çıkıyordu. Artık her satırda aynı yerde çıkan düz çizgi de kesim sayılıyor (test: 18 ızgaradan 6 → 17 doğru).
+- Otomatik kesim tek kare bırakıyorsa (görselin neredeyse tamamı) artık kesim sayılmaz.
+- Önizlemede gösterilen kutular, kesimde aynen kullanılır.
 
 ## v1.4.2'de yeni — kolajlar okunmadan önce sorulur
 
