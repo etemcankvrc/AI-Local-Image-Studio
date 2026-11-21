@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.5"
+APP_VERSION = "1.4.6"
 
 
 def _app_dir():
@@ -267,6 +267,10 @@ EN = {
     "log_profile": "Memory profile: {profile} ({desc})",
     "log_loading": "Loading {name}…",
     "log_loaded": "Model ready ({sec:.0f} s).",
+    "gen_elapsed": "{t} elapsed",
+    "gen_first_step": "preparing the first step…",
+    "gen_eta": "~{per:.0f} s/step, ~{left} left",
+    "log_gen_slow": "🐢 This model is slow on this card: ~{per:.0f} s per step, this image takes ~{mins:.0f} min. Faster: Resolution 'Low', fewer steps, or Stable Diffusion 1.5.",
     "log_gen_start": "Generating {i}/{n} — {w}×{h}, {steps} steps, seed {seed}",
     "log_saved": "Saved: {path} ({sec:.0f} s)",
     "log_oom": "⚠️ VRAM was not enough → switching to {profile} and retrying.",
@@ -4310,6 +4314,7 @@ class ImageStudio:
         if thread is not None and self.job is not thread:
             return
         self.job = None
+        self._gen_ticker_owner = None
         self._set_running_ui(False)
         if str(self.pg["mode"]) != "determinate":
             self.set_progress(100 if ok else 0, "")
@@ -5516,12 +5521,58 @@ class ImageStudio:
             offsets[key] = (acc / total_w, wt / total_w)
             acc += wt
 
+        # Canlı sayaç: adımlar çok yavaşken (ör. 4 GB'ta SDXL) ilk adım bitene kadar ekran donmuş gibi görünmesin.
+        live = {"on": False, "pct": 0.0, "i": 0, "s": 0, "S": 0, "t0": 0.0, "last": 0.0, "durs": [], "warned": False}
+
+        def mmss(sec):
+            sec = int(max(0, sec))
+            return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60}:{sec % 60:02d}"
+
+        def live_text():
+            txt = t("counter", i=live["i"] + 1, n=n, s=live["s"], S=live["S"])
+            now = time.time()
+            txt += "  •  " + t("gen_elapsed", t=mmss(now - live["t0"]))
+            if live["durs"]:
+                ds = live["durs"][1:] or live["durs"]           # ilk adım hazırlığı da içerir: varsa sayılmaz
+                per = sum(ds[-5:]) / len(ds[-5:])
+                left = per * max(0, live["S"] - live["s"]) - (now - live["last"])
+                txt += "  •  " + t("gen_eta", per=per, left=mmss(left))
+            elif live["s"] == 0:
+                txt += "  •  " + t("gen_first_step")
+            return txt
+
+        def live_start(i, S, pct):
+            now = time.time()
+            live.update(on=True, i=i, s=0, S=S, pct=pct, t0=now, last=now, durs=[])
+            self.progress(pct, live_text())
+
+        def ticker():
+            while getattr(self, "_gen_ticker_owner", None) is me:
+                time.sleep(1.0)
+                if getattr(self, "_gen_ticker_owner", None) is me and live["on"] and not self.abort.is_set():
+                    self.progress(live["pct"], live_text())
+        me = threading.current_thread()
+        self._gen_ticker_owner = me
+        threading.Thread(target=ticker, daemon=True).start()
+
         def make_cb(i, phase, k=0, K=1):
             off, wid = offsets[phase]
 
             def cb(s, S):
                 frac = off + wid * ((k + s / float(max(1, S))) / max(1, K))
-                self.progress((i + frac) * 100.0 / n, t("counter", i=i + 1, n=n, s=s, S=S))
+                now = time.time()
+                if s < live["s"] or S != live["S"] or not live["on"]:      # yeni aşama (ikinci geçiş, düzeltme)
+                    live.update(on=True, i=i, s=0, S=S, t0=now if not live["on"] else live["t0"], last=now, durs=[])
+                if s > live["s"]:
+                    live["durs"].append((now - live["last"]) / (s - live["s"]))
+                    live["last"] = now
+                live.update(s=s, pct=(i + frac) * 100.0 / n)
+                if len(live["durs"]) >= 2 and not live["warned"] and phase == "base":
+                    per = live["durs"][-1]
+                    if per >= 15:
+                        live["warned"] = True
+                        self.log(t("log_gen_slow", per=per, mins=per * S / 60.0))
+                self.progress(live["pct"], live_text())
             return cb
 
         for i in range(n):
@@ -5556,6 +5607,7 @@ class ImageStudio:
                             lora_used = []
                         self.status("status_gen")
                         self.log(t("log_gen_start", i=i + 1, n=n, w=w, h=h, steps=steps, seed=seed))
+                        live_start(i, steps, i * 100.0 / n)
                         t0 = time.time()
                         img = self.engine.generate(m, pos, neg, w, h, steps, cfg, seed, make_cb(i, "base"),
                                                    self.abort, sampler=p["sampler"])
@@ -5606,6 +5658,9 @@ class ImageStudio:
             self.post(self.add_to_gallery, out_path, meta, True)
             if p.get("_collect") is not None:
                 p["_collect"].append((out_path, meta))
+            live["on"] = False
+        live["on"] = False
+        self._gen_ticker_owner = None
         self.progress(100)
         self.status("status_done")
 

@@ -1,4 +1,4 @@
-# AI Local Image Studio v1.4.5 — Python 3.10+ (3.11 önerilir)
+# AI Local Image Studio v1.4.6 — Python 3.10+ (3.11 önerilir)
 #
 # NOT: Bunları elle kurmanız GEREKMEZ ve genel Python'unuza KURMAYIN.
 # Program ilk açılışta seçtiğiniz veri klasöründe kendi ortamını (runtime\venv) oluşturur ve
