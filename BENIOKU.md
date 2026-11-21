@@ -1,8 +1,13 @@
-# 🎨 AI Local Image Studio v1.4.5
+# 🎨 AI Local Image Studio v1.4.6
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.6'da yeni — üretimde canlı sayaç
+
+- Görsel üretilirken sayaç her saniye ilerler: "Adım 3/25 • geçen 2:40 • adım başı ~42 sn, kalan ~15:24". İlk adım bitene kadar "ilk adım hazırlanıyor…" yazar, böylece yavaş kartlarda program donmuş gibi görünmez.
+- Bir adım 15 saniyeden uzun sürerse log'da tahmini süre ve hızlandırma önerisi çıkar (ör. 4 GB VRAM'de SDXL).
 
 ## v1.4.5'te yeni — model indirirken internet kesilmez
 
