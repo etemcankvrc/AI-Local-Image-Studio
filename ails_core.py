@@ -188,6 +188,9 @@ class DataPaths:
         """Program ve alt süreçleri (pip vb.) için ortam: önbellek ve geçici dosyalar da seçilen diske."""
         return {"HF_HOME": self.hf_home, "TORCH_HOME": self.torch_home,
                 "TMP": self.tmp, "TEMP": self.tmp, "TMPDIR": self.tmp,
+                # Ağı yormamak için: Xet, her dosyayı aynı anda çok sayıda bağlantıyla parça parça indirir; bazı ev
+                # modemlerinde bu, bilgisayarın tüm internetini kesiyor. Düz HTTP: dosya başına tek bağlantı.
+                "HF_HUB_DISABLE_XET": "1", "HF_HUB_DOWNLOAD_TIMEOUT": "60", "HF_HUB_ETAG_TIMEOUT": "30",
                 "PIP_NO_CACHE_DIR": "1", "PYTHONNOUSERSITE": "1", "AILS_DATA_ROOT": self.root}
 
     def site_packages(self):
@@ -847,6 +850,50 @@ def expected_download_bytes(model):
         return None
 
 
+# İndirme sırasında bağlantı koparsa: biraz bekleyip kaldığı yerden devam (yarım dosyalar korunur).
+NET_RETRY_WAITS = (5, 15, 30, 60, 60, 60)
+NET_RETRY_HOOK = None          # program bunu log yazmak için ayarlar: fn(deneme, toplam, bekleme_sn)
+
+
+def is_network_error(e):
+    """İnternet / bağlantı kaynaklı bir hata mı (zinciri de bakılır)?"""
+    seen = 0
+    while e is not None and seen < 6:
+        name = type(e).__name__.lower()
+        if isinstance(e, (ConnectionError, TimeoutError, NetworkError)) or any(k in name for k in (
+                "connecterror", "connectionerror", "timeout", "remoteprotocol", "chunkedencoding", "incompleteread",
+                "protocolerror", "localentrynotfound", "networkerror", "readerror", "connectionreset",
+                "offlinemodeisenabled")):
+            return True
+        if isinstance(e, OSError) and getattr(e, "errno", None) in (101, 104, 110, 111, 113, 10051, 10053, 10054,
+                                                                     10060, 10061, 10065, 11001, 11004):
+            return True
+        e = e.__cause__ or e.__context__
+        seen += 1
+    return False
+
+
+def hf_snapshot_retry(abort_event=None, **kw):
+    """snapshot_download + bağlantı koparsa bekleyip yeniden dener (kaldığı yerden). Durdur'a basılırsa hemen çıkar."""
+    from huggingface_hub import snapshot_download
+    for attempt in range(len(NET_RETRY_WAITS) + 1):
+        try:
+            return snapshot_download(**kw)
+        except Exception as e:
+            if attempt >= len(NET_RETRY_WAITS) or not is_network_error(e):
+                raise
+            wait = NET_RETRY_WAITS[attempt]
+            if NET_RETRY_HOOK is not None:
+                try:
+                    NET_RETRY_HOOK(attempt + 1, len(NET_RETRY_WAITS), wait)
+                except Exception:
+                    pass
+            for _ in range(wait * 2):
+                if abort_event is not None and abort_event.is_set():
+                    raise AbortedError("user")
+                time.sleep(0.5)
+
+
 def download_image_model(models_root, model, progress_cb, abort_event):
     """
     Modeli indirir. progress_cb(done_bytes, total_bytes) her saniye çağrılır.
@@ -862,8 +909,9 @@ def download_image_model(models_root, model, progress_cb, abort_event):
 
     def _run():
         try:
-            snapshot_download(model["repo"], local_dir=dest, allow_patterns=allow_patterns(model),
-                              ignore_patterns=ignore_patterns(model), max_workers=4)
+            hf_snapshot_retry(abort_event, repo_id=model["repo"], local_dir=dest,
+                              allow_patterns=allow_patterns(model), ignore_patterns=ignore_patterns(model),
+                              max_workers=2)
         except Exception as e:  # noqa
             result["err"] = e
 
@@ -4201,7 +4249,7 @@ WEB_MAX_PER_BATCH = 500
 WEB_MAX_MB = 25
 WEB_MIN_DELAY = 1.0
 # Wikimedia vb. sunucular, kim olduğunu ve iletişim adresini söyleyen bir User-Agent ister.
-APP_UA = "AILocalImageStudio/1.4.4 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
+APP_UA = "AILocalImageStudio/1.4.5 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
 
 # Openverse (WordPress): Wikimedia, Flickr, müzeler vb. kaynaklardaki AÇIK LİSANSLI görsellerde arama.
 # Anahtarsız kullanım sınırları (Openverse kaynak kodundaki varsayılanlar): sayfa başına en fazla 20 sonuç,
@@ -5929,7 +5977,8 @@ def download_captioner(models_root, progress_cb, abort_event):
 
     def _run():
         try:
-            snapshot_download(CAPTIONER["repo"], local_dir=dest, allow_patterns=allow, max_workers=2)
+            hf_snapshot_retry(abort_event, repo_id=CAPTIONER["repo"], local_dir=dest, allow_patterns=allow,
+                              max_workers=2)
         except Exception as e:  # noqa
             result["err"] = e
 
@@ -6432,7 +6481,8 @@ def download_train_base(models_root, key, progress_cb=None, abort_event=None):
 
     def _run():
         try:
-            snapshot_download(sp["base_repo"], local_dir=dest, allow_patterns=allow, max_workers=4)
+            hf_snapshot_retry(abort_event, repo_id=sp["base_repo"], local_dir=dest, allow_patterns=allow,
+                              max_workers=2)
         except Exception as e:  # noqa
             result["err"] = e
 

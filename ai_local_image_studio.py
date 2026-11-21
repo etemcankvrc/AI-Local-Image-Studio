@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.4"
+APP_VERSION = "1.4.5"
 
 
 def _app_dir():
@@ -281,6 +281,7 @@ EN = {
     "log_upscale_done": "✅ Upscaled: {path} ({sec:.0f} s)",
     "log_start": "{app} v{ver} started.",
     "err_disk_full": "❌ Not enough space on drive {drive} — ~{need:.1f} GB needed, {free:.1f} GB free. Free up space or choose another data folder (section 6 → 📁 Data Folder).",
+    "log_net_retry": "🌐 Connection lost — continuing where it stopped in {s} s (attempt {n}/{m}).",
     "err_network": "❌ Internet / network connection problem — the download could not be completed. Check the connection and try again.",
     "err_engine_broken": "❌ The image engine is damaged. Restart the program — it is cleaned up at startup and can then be reinstalled with one click.",
     "err_hf_access": "❌ The model page could not be reached ({err}).",
@@ -3538,6 +3539,7 @@ class ImageStudio:
         self.ratings = core.load_feedback(paths)
         self.combos = []
         self._shutdown_active = False
+        core.NET_RETRY_HOOK = lambda n, m, w: self.log(t("log_net_retry", n=n, m=m, s=w))
         self._prev_host = self.st["llm_host"]
         self._prev_image_host = self.st["image_host"]
         self.remote = None             # bağlı ağ sunucusu: {"host", "key", "info", "models", "loras"}

@@ -216,6 +216,7 @@
   "log_upscale_done": "✅ Vergrößert: {path} ({sec:.0f} s)",
   "log_start": "{app} v{ver} gestartet.",
   "err_disk_full": "❌ Nicht genug Speicher auf Laufwerk {drive} — ~{need:.1f} GB benötigt, {free:.1f} GB frei. Speicher freigeben oder einen anderen Datenordner wählen (Abschnitt 6 → 📁 Datenordner).",
+  "log_net_retry": "🌐 Verbindung unterbrochen — in {s} s geht es an der gleichen Stelle weiter (Versuch {n}/{m}).",
   "err_network": "❌ Internet- / Netzwerkproblem — der Download konnte nicht abgeschlossen werden. Verbindung prüfen und erneut versuchen.",
   "err_engine_broken": "❌ Die Bild-Engine ist beschädigt. Starten Sie das Programm neu — beim Start wird aufgeräumt, danach lässt sie sich mit einem Klick neu installieren.",
   "err_hf_access": "❌ Die Modellseite war nicht erreichbar ({err}).",

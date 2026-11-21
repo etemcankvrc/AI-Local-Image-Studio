@@ -216,6 +216,7 @@
   "log_upscale_done": "✅ Upscaled: {path} ({sec:.0f} s)",
   "log_start": "{app} v{ver} started.",
   "err_disk_full": "❌ Not enough space on drive {drive} — ~{need:.1f} GB needed, {free:.1f} GB free. Free up space or choose another data folder (section 6 → 📁 Data Folder).",
+  "log_net_retry": "🌐 Connection lost — continuing where it stopped in {s} s (attempt {n}/{m}).",
   "err_network": "❌ Internet / network connection problem — the download could not be completed. Check the connection and try again.",
   "err_engine_broken": "❌ The image engine is damaged. Restart the program — it is cleaned up at startup and can then be reinstalled with one click.",
   "err_hf_access": "❌ The model page could not be reached ({err}).",

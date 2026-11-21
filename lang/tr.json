@@ -216,6 +216,7 @@
   "log_upscale_done": "✅ Büyütüldü: {path} ({sec:.0f} sn)",
   "log_start": "{app} v{ver} başlatıldı.",
   "err_disk_full": "❌ {drive} diskinde yeterli yer yok: ~{need:.1f} GB gerekli, {free:.1f} GB boş. Yer açın ya da başka bir veri klasörü seçin (6. bölüm → 📁 Veri Klasörü).",
+  "log_net_retry": "🌐 Bağlantı koptu — {s} sn sonra kaldığı yerden devam edilecek (deneme {n}/{m}).",
   "err_network": "❌ İnternet / ağ bağlantısı sorunu — indirme tamamlanamadı. Bağlantıyı kontrol edip tekrar deneyin.",
   "err_engine_broken": "❌ Görsel motoru bozulmuş. Programı yeniden başlatın — açılışta temizlenir, sonra tek tıkla yeniden kurulabilir.",
   "err_hf_access": "❌ Model sayfasına ulaşılamadı ({err}).",

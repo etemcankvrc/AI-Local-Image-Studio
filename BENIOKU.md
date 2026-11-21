@@ -1,8 +1,14 @@
-# 🎨 AI Local Image Studio v1.4.4
+# 🎨 AI Local Image Studio v1.4.5
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.5'te yeni — model indirirken internet kesilmez
+
+- Hugging Face'in yeni indirme yöntemi (Xet) her dosyayı aynı anda çok sayıda bağlantıyla parça parça indiriyordu. Bazı ev modemleri bu kadar bağlantıda tıkanıp bilgisayarın tüm internetini kesiyordu. Artık düz indirme kullanılıyor: dosya başına tek bağlantı, aynı anda en fazla 2 dosya.
+- Bağlantı koparsa indirme hemen başarısız olmaz: 5 sn, 15 sn, 30 sn, sonra dakikada bir olmak üzere 6 kez kaldığı yerden yeniden denenir. Log'da "🌐 Bağlantı koptu — … kaldığı yerden devam edilecek" yazar. Durdur her an çalışır.
+- Yarım kalan dosyalar silinmez; bir sonraki denemede kaldığı yerden devam edilir.
 
 ## v1.4.4'te yeni — "İşlem bittiğinde bilgisayarı kapat" eğitimde de çalışır
 
