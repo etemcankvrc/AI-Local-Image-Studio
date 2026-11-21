@@ -1,8 +1,37 @@
-# 🎨 AI Local Image Studio v1.4.1
+# 🎨 AI Local Image Studio v1.4.5
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.5'te yeni — model indirirken internet kesilmez
+
+- Hugging Face'in yeni indirme yöntemi (Xet) her dosyayı aynı anda çok sayıda bağlantıyla parça parça indiriyordu. Bazı ev modemleri bu kadar bağlantıda tıkanıp bilgisayarın tüm internetini kesiyordu. Artık düz indirme kullanılıyor: dosya başına tek bağlantı, aynı anda en fazla 2 dosya.
+- Bağlantı koparsa indirme hemen başarısız olmaz: 5 sn, 15 sn, 30 sn, sonra dakikada bir olmak üzere 6 kez kaldığı yerden yeniden denenir. Log'da "🌐 Bağlantı koptu — … kaldığı yerden devam edilecek" yazar. Durdur her an çalışır.
+- Yarım kalan dosyalar silinmez; bir sonraki denemede kaldığı yerden devam edilir.
+
+## v1.4.4'te yeni — "İşlem bittiğinde bilgisayarı kapat" eğitimde de çalışır
+
+- Önceden yalnızca görsel üretiminden sonra kapatıyordu. Artık eğitim (hafif / derin / kendi kendine öğrenme) ve görsel okuma bitince de kapatır.
+- Süreli eğitimde (ör. 500 dk) süre dolunca LoRA kaydedilir, sonra 60 saniyelik kapatma sayacı başlar; açılan pencereden ya da kutunun işaretini kaldırarak iptal edilebilir.
+- **Durdur**'a basarsan ya da eğitim hatayla biterse bilgisayar kapatılmaz.
+
+## v1.4.3'te yeni — kolajda her görsel ve her kare için sen karar verirsin
+
+- Kolaj penceresinde artık her görselin kendi seçimi var:
+  - **Kareye tıkla:** o kare alınmaz (gri ✕); tekrar tıkla, geri alınır. Örn. ikiye bölünmüş bir görselden yalnızca birini al.
+  - **Görselin altındaki düğme:** ✂ Kes → 🖼 Kesme (tek görsel olarak kalsın) → ✕ Çıkar.
+  - **Elle bölme:** kesim yanlışsa ya da hiç bulunamadıysa ┃ 2 (yan yana), ━ 2 (üst üste), ╋ 4 (2×2), ━ 3 (üst üste); ↺ otomatiğe döner. Elle kesim en yakın düz dikişe oturtulur.
+  - Altta sonuç canlı görünür: "N yeni görsel • N kesilmeden kalır • N çıkarılır". **✂ Seçtiğim gibi uygula** ile uygulanır. "Hepsini çıkar" / "Hepsi kesilmeden kalsın" tek tıkla hepsine.
+- **2×2 ızgaralar daha iyi bulunuyor:** seri çekim gibi birbirine çok benzeyen karelerde orta dikiş zayıf kaldığı için 4 yerine 2 kare çıkıyordu. Artık her satırda aynı yerde çıkan düz çizgi de kesim sayılıyor (test: 18 ızgaradan 6 → 17 doğru).
+- Otomatik kesim tek kare bırakıyorsa (görselin neredeyse tamamı) artık kesim sayılmaz.
+- Önizlemede gösterilen kutular, kesimde aynen kullanılır.
+
+## v1.4.2'de yeni — kolajlar okunmadan önce sorulur
+
+- **🔍 Şimdi oku** artık önce kolaj / bölünmüş ekran kontrolü yapar, sonra okur. Kes dersen yalnızca kareler okunur, asılları okunmaz.
+- Kolaj sorusunun penceresini kapatmak artık "Kalsın" sayılmaz: karar verilmemiş kalır ve eğitim başlarken yeniden sorulur.
+- Sıra her yerde aynı: **içe aktarma → kolaj sorusu → okuma**. İçe aktarmadan hemen sonraki otomatik okuma aynı soruyu ikinci kez sormaz.
 
 ## v1.4.1'de yeni — yapay zeka yazdığına sadık kalır
 
@@ -45,7 +74,7 @@ LLM gibi görsel modelleri ve LoRA'lar da artık ağda paylaşılabilir. İki y�
 - Program artık bu görselleri bulur ve küçük önizlemeleriyle gösterir (kırmızı çerçeveler = kesilecek kareler). Seçenekler:
   - **✂ Kes, ayrı görseller yap:** her kare ayrı bir görsel olarak veri setine eklenir (veri setinin adıyla), yani bir resimden birden fazla eğitim verisi çıkar. Ayırıcı beyaz/siyah şeritler kırpılır; iç içe düzenler (ör. solda büyük, sağda iki küçük) de ayrılır. "Şundan küçük görselleri atla" boyutundan küçük kareler alınmaz. Yeni kareler otomatik açıklanır.
   - **Çıkar:** eğitimden çıkarılır. **Kalsın:** kalır (bunlar için bir daha sorulmaz).
-  - Kontrol, içe aktarma (klasör, dosya, video, internet) bittiğinde ve eğitim başlarken yapılır. Eğitim başlarken **İptal** de seçilebilir.
+  - Kontrol, içe aktarma (klasör, dosya, video, internet) bittiğinde, **🔍 Şimdi oku**'ya basınca ve eğitim başlarken yapılır; her zaman okumadan önce. Eğitim başlarken **Eğitimi başlatma** da seçilebilir. Pencereyi kapatırsanız karar verilmemiş sayılır ve sonra yine sorulur.
   - Çıkarılan dosyalar silinmez, veri setinin `excluded` klasörüne taşınır. Kendi klasörünüzden bağlantı olarak eklenen dosyalara hiç dokunulmaz, yalnızca veri setinden çıkarılır.
   - Algılama ek model indirmez; görüntünün ortasındaki düz, tam boy sınırlara ve tek renkli ayırıcı şeritlere bakar. Tuğla, fayans gibi desenler kolaj sayılmaz. Nadiren yanılabilir; bu yüzden dosya adları gösterilir ve karar size bırakılır.
 

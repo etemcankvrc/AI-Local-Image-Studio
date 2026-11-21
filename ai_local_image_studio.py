@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.5"
 
 
 def _app_dir():
@@ -281,6 +281,7 @@ EN = {
     "log_upscale_done": "✅ Upscaled: {path} ({sec:.0f} s)",
     "log_start": "{app} v{ver} started.",
     "err_disk_full": "❌ Not enough space on drive {drive} — ~{need:.1f} GB needed, {free:.1f} GB free. Free up space or choose another data folder (section 6 → 📁 Data Folder).",
+    "log_net_retry": "🌐 Connection lost — continuing where it stopped in {s} s (attempt {n}/{m}).",
     "err_network": "❌ Internet / network connection problem — the download could not be completed. Check the connection and try again.",
     "err_engine_broken": "❌ The image engine is damaged. Restart the program — it is cleaned up at startup and can then be reinstalled with one click.",
     "err_hf_access": "❌ The model page could not be reached ({err}).",
@@ -433,6 +434,7 @@ EN = {
     "v2_captions": "Descriptions:",
     "v2_autocap": "🔍 Read images without a description automatically (Florence-2)",
     "v2_caption_now": "🔍 Read now",
+    "v2_log_collage_later": "No decision for {n} collage-like image(s) — you'll be asked again when training starts.",
     "v2_caps_count": "{k} / {n} images have a description.",
     "v2_rewards": "Rewards:",
     "v2_rewards_count": "👍 {up}  ·  👎 {down}  ·  pairs: {pairs}",
@@ -667,15 +669,23 @@ EN = {
     "v2_base_need_ram": "≥ {gb:.0f} GB RAM",
     "v2_status_stopping": "Stopping — saving the latest state…",
     "tr_log_stopping": "⏹ Stopping: the current step is cancelled, the LoRA is saved as it is (no sample image)…",
-    "v2_collage_q2": "{n} image(s) look like a collage or split screen (several pictures in one image). The model would learn this layout too and start drawing split images.\n\nThe red frames show where the program would cut. ✂ Cut turns every frame into a separate image ({new} new images in total) — one picture becomes several training images.",
+    "v2_collage_q2": "{n} image(s) look like a collage or split screen (several pictures in one image). The model would learn this layout too and start drawing split images. The red frames show where the program would cut — {new} new images in total.",
     "v2_collage_panels": "✂ {n} frames",
     "v2_collage_nosplit": "can't be cut",
+    "v2_collage_help": "Click a frame to leave it out (grey ✕), click again to take it back. The button under each image switches between ✂ Cut, 🖼 Don't cut (one image) and ✕ Remove. If the cut is wrong or missing, split it yourself: ┃ 2 side by side, ━ 2 stacked, ╋ 4 (2×2), ━ 3 stacked, ↺ back to automatic.",
+    "v2_collage_mode_split": "✂ Cut · {k}/{n} frames",
+    "v2_collage_mode_whole": "🖼 Don't cut (one image)",
+    "v2_collage_mode_out": "✕ Remove",
+    "v2_collage_sum": "Result: {new} new images • {whole} kept uncut • {out} removed",
+    "v2_collage_apply": "✂ Apply my choices ({new} new images)",
+    "v2_collage_rest": "…and {n} more images (no preview):",
+    "v2_log_collage_dropped": "{n} frame(s) left out, as you chose.",
     "v2_collage_more": "…and {n} more",
     "v2_collage_btn_split": "✂ Cut into separate images ({new})",
-    "v2_collage_btn_out": "Remove",
-    "v2_collage_btn_keep": "Keep",
+    "v2_collage_btn_out": "Remove all",
+    "v2_collage_btn_keep": "Keep all uncut",
     "v2_collage_btn_cancel": "Don't start training",
-    "v2_collage_note": "Originals are never deleted: cut and removed images are moved to the dataset's 'excluded' folder. Images that can't be cut are removed. Frames smaller than the 'skip smaller images' size are dropped. 'Keep': you won't be asked about these again.",
+    "v2_collage_note": "Originals are never deleted: cut and removed images are moved to the dataset's 'excluded' folder. Frames smaller than 'Skip images smaller than' are not taken. Images you keep uncut are not asked about again.",
     "v2_status_collage_split": "Cutting collages into frames…",
     "v2_log_collage_split": "✂ {n} collage(s) cut into {new} separate images (originals moved to: {folder})",
     "v2_log_collage_split_failed": "{n} collage(s) could not be cut and were removed from the dataset.",
@@ -2257,7 +2267,7 @@ class StyleStudioWindow:
         data = core.load_dataset(self.paths, slug)
         return bool(data) and any(not it.get("caption") for it in data["items"])
 
-    def on_caption(self):
+    def on_caption(self, after_import=False):
         if self.app.running():
             messagebox.showinfo(APP_NAME, t("busy"), parent=self.w)
             return
@@ -2272,7 +2282,8 @@ class StyleStudioWindow:
         if plan is None:
             return
         self.collect()
-        self.app.start_job("analysis", self.job_analysis, "caption", slug, plan, {})
+        # içe aktarmadan hemen sonraki otomatik okumada kolajlar az önce soruldu, tekrar sorulmaz
+        self.app.start_job("analysis", self.job_analysis, "caption", slug, plan, {"after_import": after_import})
         self.update_state()
 
     def on_start(self):
@@ -2336,6 +2347,9 @@ class StyleStudioWindow:
     def job_analysis(self, mode, slug, plan, opts):
         app = self.app
         m15 = core.IMAGE_MODEL_BY_KEY["sd15"]
+        if mode == "caption" and not opts.get("after_import"):
+            # "Şimdi oku": kolajlar okunmadan önce sorulur (kesilirse kareler okunur, asılları okunmaz)
+            self._collage_check(slug, can_cancel=False)
         if mode in ("light", "deep"):
             cc = self._collage_check(slug, can_cancel=True)
             if cc == "cancel":
@@ -2635,8 +2649,11 @@ class StyleStudioWindow:
 
     def _ask_collage(self, previews, n_total, n_new, can_cancel):
         """
-        Kolaj penceresi: küçük önizlemeler (kırmızı çerçeveler = kesilecek kareler) ve dört seçenek.
-        Dönüş: 'split' | 'exclude' | 'keep' | None (eğitimi başlatma).
+        Kolaj penceresi. Her görsel için: karelere tıklayınca o kare alınmaz / geri alınır; alttaki düğme
+        ✂ Kes → 🖼 Kesme (tek görsel kalsın) → ✕ Çıkar arasında geçer.
+        previews: [(ad, küçük görsel, kare sayısı, kutular, ölçek, dosya)] — önizlemesi olmayanlar için görsel None.
+        Dönüş: 'exclude' | 'keep' (hepsi) | {"split": {dosya: [kutular]}, "keep": [...], "exclude": [...]}
+               | None (pencere kapatıldı / eğitimi başlatma).
         """
         parent = self.w if self.alive() else self.app.r
         from PIL import ImageTk
@@ -2645,38 +2662,199 @@ class StyleStudioWindow:
         dlg.title(APP_NAME)
         dlg.configure(bg=CARD_BG)
         dlg.transient(parent)
-        result = {"v": None if can_cancel else "keep"}
+        result = {"v": None}
         tk.Label(dlg, text=t("v2_collage_q2", n=n_total, new=n_new), bg=CARD_BG, fg=TXT, font=f.n10, justify="left",
-                 wraplength=760, anchor="w").pack(fill="x", padx=14, pady=(12, 8))
-        grid = tk.Frame(dlg, bg=CARD_BG)
-        grid.pack(padx=14, pady=4)
+                 wraplength=1060, anchor="w").pack(fill="x", padx=14, pady=(12, 4))
+        tk.Label(dlg, text=t("v2_collage_help"), bg=CARD_BG, fg=BLUE, font=f.b9, justify="left",
+                 wraplength=1060, anchor="w").pack(fill="x", padx=14, pady=(0, 6))
+        # her görselin durumu
+        tiles = []
+        for e in previews:
+            name, th, k, boxes, sc, fpath, full = (list(e) + [None] * 7)[:7]
+            boxes = list(boxes or [])
+            tiles.append({"name": name, "th": th, "boxes": boxes, "auto": list(boxes), "s": sc or 1.0,
+                          "file": fpath, "path": full, "mode": "split" if boxes else "out", "drop": set()})
+        shown = [x for x in tiles if x["th"] is not None]
+        rest = [x for x in tiles if x["th"] is None]
+        COLS = 5
+        outer = tk.Frame(dlg, bg=CARD_BG)
+        outer.pack(fill="both", expand=True, padx=14)
+        rows = (len(shown) + COLS - 1) // COLS
+        view_h = min(2, max(1, rows)) * 300
+        cv = tk.Canvas(outer, bg=CARD_BG, highlightthickness=0, height=view_h, width=COLS * 214)
+        sb = ttk.Scrollbar(outer, orient="vertical", command=cv.yview)
+        cv.configure(yscrollcommand=sb.set)
+        cv.pack(side="left", fill="both", expand=True)
+        if rows > 2:
+            sb.pack(side="right", fill="y")
+        inner = tk.Frame(cv, bg=CARD_BG)
+        cv.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+
+        def wheel(ev):
+            d = -1 if (getattr(ev, "num", 0) == 4 or getattr(ev, "delta", 0) > 0) else 1
+            cv.yview_scroll(d * 2, "units")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            dlg.bind_all(seq, wheel)
         dlg._imgs = []
-        for i, (name, th, k) in enumerate(previews):
-            cell = tk.Frame(grid, bg=CARD_BG)
-            cell.grid(row=i // 4, column=i % 4, padx=4, pady=4, sticky="n")
-            ph = ImageTk.PhotoImage(th)
+        lbl_sum = tk.Label(dlg, bg=CARD_BG, fg=GREEN, font=f.b10, anchor="w")
+        btn_apply = {}
+
+        def mode_text(x):
+            if x["mode"] == "split":
+                kept = len(x["boxes"]) - len(x["drop"])
+                return t("v2_collage_mode_split", k=kept, n=len(x["boxes"])) if kept else t("v2_collage_mode_out")
+            return t("v2_collage_mode_whole") if x["mode"] == "whole" else t("v2_collage_mode_out")
+
+        def totals():
+            new = whole = out = 0
+            for x in tiles:
+                kept = len(x["boxes"]) - len(x["drop"])
+                if x["mode"] == "split" and kept:
+                    new += kept
+                elif x["mode"] == "whole":
+                    whole += 1
+                else:
+                    out += 1
+            return new, whole, out
+
+        def refresh_sum():
+            new, whole, out = totals()
+            lbl_sum.config(text=t("v2_collage_sum", new=new, whole=whole, out=out))
+            if btn_apply:
+                btn_apply["b"].config(text=t("v2_collage_apply", new=new))
+
+        def draw(x):
+            c = x["cv"]
+            c.delete("ov")
+            W, H = x["th"].size
+            sc = x["s"]
+            if x["mode"] == "out":
+                c.create_rectangle(0, 0, W, H, fill="#000000", stipple="gray50", outline="", tags="ov")
+                c.create_text(W / 2, H / 2, text="✕", fill="#ff5555", font=f.b18, tags="ov")
+            elif x["mode"] == "whole":
+                c.create_rectangle(1, 1, W - 2, H - 2, outline=GREEN, width=3, tags="ov")
+            else:
+                for i, (x0, y0, x1, y1) in enumerate(x["boxes"]):
+                    r = (x0 * sc, y0 * sc, x1 * sc - 1, y1 * sc - 1)
+                    if i in x["drop"]:
+                        c.create_rectangle(*r, fill="#000000", stipple="gray50", outline="#777777", width=1,
+                                           tags="ov")
+                        c.create_text((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, text="✕", fill="#cccccc",
+                                      font=f.b12, tags="ov")
+                    else:
+                        c.create_rectangle(*r, outline="#ff3c3c", width=2, tags="ov")
+            x["btn"].config(text=mode_text(x), bg={"split": GREEN, "whole": BLUE}.get(x["mode"], ORANGE)
+                            if not (x["mode"] == "split" and len(x["drop"]) == len(x["boxes"])) else ORANGE)
+            refresh_sum()
+
+        def click(x, ev):
+            if x["mode"] != "split":
+                if not x["boxes"]:
+                    return
+                x["mode"] = "split"
+            else:
+                sc = x["s"]
+                hit = [i for i, (x0, y0, x1, y1) in enumerate(x["boxes"])
+                       if x0 * sc <= ev.x <= x1 * sc and y0 * sc <= ev.y <= y1 * sc]
+                if not hit:
+                    return
+                i = min(hit, key=lambda j: (x["boxes"][j][2] - x["boxes"][j][0]) * (x["boxes"][j][3] - x["boxes"][j][1]))
+                x["drop"] ^= {i}
+            draw(x)
+
+        def preset(x, rc):
+            """Elle bölme (kesim bulunamadıysa ya da yanlışsa) ya da ↺ otomatiğe dönüş."""
+            if rc is None:
+                x["boxes"] = list(x["auto"])
+            else:
+                try:
+                    from PIL import Image
+                    with Image.open(x["path"]) as im:
+                        x["boxes"] = core.collage_grid_boxes(im, rc[0], rc[1],
+                                                             min_side=int(self.v2.get("min_side", 256) or 0))
+                except Exception:
+                    return
+            x["drop"] = set()
+            x["mode"] = "split" if x["boxes"] else "out"
+            draw(x)
+
+        def cycle(x):
+            order = ["split", "whole", "out"] if x["boxes"] else ["whole", "out"]
+            x["mode"] = order[(order.index(x["mode"]) + 1) % len(order)] if x["mode"] in order else order[0]
+            if x["mode"] == "split" and len(x["drop"]) == len(x["boxes"]):
+                x["drop"] = set()
+            draw(x)
+
+        for i, x in enumerate(shown):
+            cell = tk.Frame(inner, bg=CARD_BG)
+            cell.grid(row=i // COLS, column=i % COLS, padx=5, pady=5, sticky="n")
+            ph = ImageTk.PhotoImage(x["th"])
             dlg._imgs.append(ph)
-            tk.Label(cell, image=ph, bg=CANVAS_BG).pack()
-            tk.Label(cell, text=(name if len(name) <= 26 else name[:24] + "…"), bg=CARD_BG, fg=LBL,
-                     font=f.n9).pack()
-            tk.Label(cell, text=t("v2_collage_panels", n=k) if k >= 1 else t("v2_collage_nosplit"), bg=CARD_BG,
-                     fg=GREEN if k >= 1 else WARN, font=f.b9).pack()
-        if n_total > len(previews):
-            tk.Label(dlg, text=t("v2_collage_more", n=n_total - len(previews)), bg=CARD_BG, fg=LBL,
-                     font=f.n9).pack(anchor="w", padx=14)
+            c = tk.Canvas(cell, width=x["th"].width, height=x["th"].height, bg=CANVAS_BG, highlightthickness=0,
+                          cursor="hand2")
+            c.create_image(0, 0, image=ph, anchor="nw")
+            c.pack()
+            c.bind("<Button-1>", lambda ev, x=x: click(x, ev))
+            x["cv"] = c
+            nm = x["name"] or ""
+            tk.Label(cell, text=(nm if len(nm) <= 28 else nm[:26] + "…"), bg=CARD_BG, fg=LBL, font=f.n9).pack()
+            x["btn"] = tk.Button(cell, bg=GREEN, fg="#000000", font=f.b9, relief="flat", cursor="hand2",
+                                 command=lambda x=x: cycle(x))
+            x["btn"].pack(fill="x", pady=(2, 0))
+            if x["path"]:
+                pr = tk.Frame(cell, bg=CARD_BG)
+                pr.pack(fill="x", pady=(2, 0))
+                for txt, rc in (("┃ 2", (1, 2)), ("━ 2", (2, 1)), ("╋ 4", (2, 2)), ("━ 3", (3, 1)), ("↺", None)):
+                    if rc is None and not x["auto"]:
+                        continue
+                    tk.Button(pr, text=txt, bg=BTN, fg=TXT, font=f.n9, relief="flat", cursor="hand2", padx=2,
+                              command=lambda x=x, rc=rc: preset(x, rc)).pack(side="left", fill="x", expand=True,
+                                                                          padx=(0, 2))
+        if rest:
+            rf = tk.Frame(dlg, bg=CARD_BG)
+            rf.pack(fill="x", padx=14, pady=(4, 0))
+            tk.Label(rf, text=t("v2_collage_rest", n=len(rest)), bg=CARD_BG, fg=LBL, font=f.n9).pack(side="left")
+            rest_mode = {"v": "split"}
+
+            def cycle_rest():
+                order = ["split", "whole", "out"]
+                rest_mode["v"] = order[(order.index(rest_mode["v"]) + 1) % 3]
+                for x in rest:
+                    x["mode"] = rest_mode["v"] if (x["boxes"] or rest_mode["v"] != "split") else "out"
+                b_rest.config(text={"split": t("v2_collage_mode_split", k="✓", n="✓").split("·")[0].strip(),
+                                    "whole": t("v2_collage_mode_whole"),
+                                    "out": t("v2_collage_mode_out")}[rest_mode["v"]])
+                refresh_sum()
+            b_rest = tk.Button(rf, text=t("v2_collage_mode_split", k="✓", n="✓").split("·")[0].strip(), bg=BTN, fg=TXT,
+                               font=f.b9, relief="flat", cursor="hand2", command=cycle_rest)
+            b_rest.pack(side="left", padx=8)
+        lbl_sum.pack(fill="x", padx=14, pady=(8, 0))
         btns = tk.Frame(dlg, bg=CARD_BG)
-        btns.pack(fill="x", padx=14, pady=12)
+        btns.pack(fill="x", padx=14, pady=10)
 
         def choose(v):
             result["v"] = v
             dlg.destroy()
 
-        b_split = tk.Button(btns, text=t("v2_collage_btn_split", new=n_new), bg=GREEN, fg="#000000", font=f.b11,
+        def apply():
+            out = {"split": {}, "keep": [], "exclude": []}
+            for x in tiles:
+                if not x["file"]:
+                    continue
+                if x["mode"] == "split" and x["boxes"]:
+                    out["split"][x["file"]] = [b for i, b in enumerate(x["boxes"]) if i not in x["drop"]]
+                elif x["mode"] == "whole":
+                    out["keep"].append(x["file"])
+                else:
+                    out["exclude"].append(x["file"])
+            choose(out)
+
+        b_split = tk.Button(btns, text=t("v2_collage_apply", new=n_new), bg=GREEN, fg="#000000", font=f.b11,
                             activebackground="#33ff99", activeforeground="#000000", relief="flat", cursor="hand2",
-                            command=lambda: choose("split"))
+                            command=apply)
         b_split.pack(side="left", fill="x", expand=True, ipady=5)
-        if n_new < 1:
-            b_split.config(state="disabled", bg=BTN)
+        btn_apply["b"] = b_split
         tk.Button(btns, text=t("v2_collage_btn_out"), bg=ORANGE, fg="white", font=f.b10, relief="flat", cursor="hand2",
                   command=lambda: choose("exclude")).pack(side="left", padx=(8, 0), ipady=5, ipadx=10)
         tk.Button(btns, text=t("v2_collage_btn_keep"), bg=BTN, fg=TXT, font=f.b10, relief="flat", cursor="hand2",
@@ -2684,14 +2862,27 @@ class StyleStudioWindow:
         if can_cancel:
             tk.Button(btns, text=t("v2_collage_btn_cancel"), bg=RED, fg="white", font=f.b10, relief="flat",
                       cursor="hand2", command=lambda: choose(None)).pack(side="left", padx=(8, 0), ipady=5, ipadx=10)
-        tk.Label(dlg, text=t("v2_collage_note"), bg=CARD_BG, fg="#888888", font=f.n9, justify="left", wraplength=760,
+        tk.Label(dlg, text=t("v2_collage_note"), bg=CARD_BG, fg="#888888", font=f.n9, justify="left", wraplength=1060,
                  anchor="w").pack(fill="x", padx=14, pady=(0, 12))
-        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        for x in shown:
+            draw(x)
+        refresh_sum()
+
+        def close():
+            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                try:
+                    dlg.unbind_all(seq)
+                except Exception:
+                    pass
+            dlg.destroy()
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.bind("<Destroy>", lambda e: e.widget is dlg and [dlg.unbind_all(q) for q in
+                                                              ("<MouseWheel>", "<Button-4>", "<Button-5>")])
         dlg.update_idletasks()
         try:
             x = parent.winfo_rootx() + max(0, (parent.winfo_width() - dlg.winfo_width()) // 2)
-            y = parent.winfo_rooty() + max(0, (parent.winfo_height() - dlg.winfo_height()) // 3)
-            dlg.geometry(f"+{x}+{y}")
+            y = parent.winfo_rooty() + max(0, (parent.winfo_height() - dlg.winfo_height()) // 4)
+            dlg.geometry(f"+{x}+{max(0, y)}")
         except Exception:
             pass
         dlg.grab_set()
@@ -2717,43 +2908,63 @@ class StyleStudioWindow:
         files = [it.get("file") for it in found]
         previews, n_new = [], 0
         min_side = max(64, int(self.v2.get("min_side", 256) or 0))
-        for k, it in enumerate(found[:200]):
+        for k, it in enumerate(found):
+            if app.abort.is_set():
+                raise core.AbortedError("user")
             p = core.dataset_item_path(self.paths, slug, it)
+            name = os.path.basename(it.get("file") or "")
             try:
-                if k < 8:
-                    th, n = core.collage_preview(p, min_side=min_side)
-                    previews.append((os.path.basename(it.get("file") or ""), th, n))
+                if k < 120:
+                    th, bx, sc = core.collage_preview_data(p, max_side=200, min_side=min_side)
                 else:
                     from PIL import Image
                     with Image.open(p) as im:
-                        n = len(core.collage_panels(im.convert("RGB"), min_px=min_side))
+                        bx, th, sc = core.collage_boxes(im.convert("RGB"), min_side), None, 1.0
             except Exception:
-                n = 0
-            n_new += n
+                th, bx, sc = None, [], 1.0
+            previews.append((name, th, len(bx), bx, sc, it.get("file"), p))
+            n_new += len(bx)
+            if k % 5 == 0:
+                self._prog(k + 1, len(found), t("v2_prog_collage", a=k + 1, b=len(found)))
+        self._finish(None)
         ans = app.call_ui(self._ask_collage, previews, len(files), n_new, can_cancel)
         if ans is None:
             if can_cancel:
                 app.log(t("v2_log_collage_cancel"))
                 return "cancel"
-            ans = "keep"
-        result = "ok"
+            # pencere kapatıldı: karar verilmedi sayılır ("kalsın" diye işaretlenmez), eğitim başlarken yine sorulur
+            app.log(t("v2_log_collage_later", n=len(files)))
+            self._finish(None)
+            return "ok"
         if ans == "split":
+            ans = {"split": {fp: None for fp in files}, "keep": [], "exclude": []}
+        elif ans == "exclude":
+            ans = {"split": {}, "keep": [], "exclude": list(files)}
+        elif ans == "keep":
+            ans = {"split": {}, "keep": list(files), "exclude": []}
+        result = "ok"
+        to_split = ans.get("split") or {}
+        if to_split:
             app.status("v2_status_collage_split")
-            st = core.split_collage_items(self.paths, slug, files, min_side=self.v2.get("min_side", 256),
-                                          abort_event=app.abort,
+            chosen = {fp: b for fp, b in to_split.items() if b is not None}
+            n_drop = sum(len(pv[3]) - len(chosen[pv[5]]) for pv in previews if pv[5] in chosen)
+            st = core.split_collage_items(self.paths, slug, list(to_split), min_side=self.v2.get("min_side", 256),
+                                          abort_event=app.abort, boxes=chosen,
                                           progress_cb=lambda a, b: self._prog(a, b, t("v2_prog_collage", a=a, b=b)))
             app.log(t("v2_log_collage_split", n=st["split"], new=st["new"],
                       folder=os.path.join(core._ds_dir(self.paths, slug), core.EXCLUDED_DIR)))
+            if n_drop:
+                app.log(t("v2_log_collage_dropped", n=n_drop))
             if st["failed"]:
                 core.exclude_dataset_items(self.paths, slug, st["failed"])
                 app.log(t("v2_log_collage_split_failed", n=len(st["failed"])))
             result = "split" if st["new"] else "ok"
-        elif ans == "exclude":
-            n = core.exclude_dataset_items(self.paths, slug, files)
+        if ans.get("exclude"):
+            n = core.exclude_dataset_items(self.paths, slug, ans["exclude"])
             app.log(t("v2_log_collage_out", n=n, folder=os.path.join(core._ds_dir(self.paths, slug), core.EXCLUDED_DIR)))
-        else:
-            core.keep_dataset_items(self.paths, slug, files)
-            app.log(t("v2_log_collage_kept", n=len(files)))
+        if ans.get("keep"):
+            core.keep_dataset_items(self.paths, slug, ans["keep"])
+            app.log(t("v2_log_collage_kept", n=len(ans["keep"])))
         self._finish(None)
         return result
 
@@ -2792,7 +3003,7 @@ class StyleStudioWindow:
             self.app.log(t("v2_log_caption_later"))
             return
         self.app.log(t("v2_log_caption_auto"))
-        self.on_caption()
+        self.on_caption(after_import=True)
 
     def job_download(self, slug, urls):
         self.app.status("v2_status_web")
@@ -3328,6 +3539,7 @@ class ImageStudio:
         self.ratings = core.load_feedback(paths)
         self.combos = []
         self._shutdown_active = False
+        core.NET_RETRY_HOOK = lambda n, m, w: self.log(t("log_net_retry", n=n, m=m, s=w))
         self._prev_host = self.st["llm_host"]
         self._prev_image_host = self.st["image_host"]
         self.remote = None             # bağlı ağ sunucusu: {"host", "key", "info", "models", "loras"}
@@ -4105,7 +4317,9 @@ class ImageStudio:
         nxt, self.after_job = self.after_job, None
         if nxt is not None and ok:
             self.r.after(200, nxt)
-        if kind == "generate" and ok and self.v_shutdown.get():
+        # görsel üretimi ve eğitim / görsel okuma (analiz) başarıyla bitince; kullanıcı durdurduysa ya da hata
+        # olduysa kapatılmaz. Sırada bekleyen bir iş varsa (ör. içe aktarmadan sonra okuma) o bitince kapatılır.
+        if kind in ("generate", "analysis") and ok and self.v_shutdown.get() and nxt is None:
             self._trigger_shutdown()
 
     def _engine_broken_prompt(self):
