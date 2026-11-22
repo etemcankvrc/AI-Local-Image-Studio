@@ -802,7 +802,7 @@ MARKER = ".ails_complete.json"
 def image_model_dir(models_root, model):
     if model.get("custom"):
         return model["file"]          # kullanıcının modeli tek dosyadır
-    return os.path.join(models_root, "image", model["key"])
+    return os.path.join(models_root, model.get("dir", "image"), model["key"])
 
 
 def upscaler_path(models_root):
@@ -894,6 +894,55 @@ def hf_snapshot_retry(abort_event=None, **kw):
                 time.sleep(0.5)
 
 
+# Lisans metinleri programla gelir (LICENSES klasörü); indirilen her modelin klasörüne lisansının bir kopyası konur
+# (OpenRAIL-M: modeli alan herkese lisansın bir kopyası verilmeli).
+LICENSES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LICENSES")
+LICENSE_FILES = {"CreativeML OpenRAIL-M": ["CreativeML-OpenRAIL-M.txt"],
+                 "CreativeML OpenRAIL++-M": ["CreativeML-OpenRAIL++-M.txt"],
+                 "Apache-2.0": ["Apache-2.0.txt"]}
+
+
+def copy_license_files(dest, model):
+    """Modelin lisans metnini model klasörüne koyar (LICENSE_<ad>.txt). Kullanıcının kendi modellerine dokunulmaz."""
+    if model.get("custom") or not os.path.isdir(dest):
+        return []
+    names = model.get("license_files") or LICENSE_FILES.get(model.get("license"), [])
+    out = []
+    for n in names:
+        src = os.path.join(LICENSES_DIR, n)
+        dst = os.path.join(dest, "LICENSE_" + n)
+        try:
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.copy2(src, dst)
+            out.append(dst)
+        except OSError:
+            pass
+    return out
+
+
+CAPTIONER_LICENSE = {"license_files": ["MIT_Florence-2.txt"]}
+DETECTOR_LICENSE = {"license_files": ["MIT_YuNet.txt", "Apache-2.0.txt", "MIT_lbpcascade_animeface.txt"]}
+UPSCALE_LICENSE = {"license_files": ["BSD-3-Clause_Real-ESRGAN.txt"]}
+
+
+def ensure_license_copies(models_root, models):
+    """Daha önce indirilmiş modellerin klasörlerine de lisans kopyası (eski sürümlerde konmuyordu)."""
+    for m in models:
+        try:
+            if is_image_model_installed(models_root, m):
+                copy_license_files(image_model_dir(models_root, m), m)
+        except Exception:
+            pass
+    for d, lic in ((os.path.join(models_root, "caption", "florence2_base_ft"), CAPTIONER_LICENSE),
+                   (os.path.join(models_root, "detect"), DETECTOR_LICENSE),
+                   (os.path.join(models_root, "upscale"), UPSCALE_LICENSE)):
+        try:
+            if os.path.isdir(d) and any(not x.startswith(("LICENSE", ".")) for x in os.listdir(d)):
+                copy_license_files(d, lic)
+        except Exception:
+            pass
+
+
 def download_image_model(models_root, model, progress_cb, abort_event):
     """
     Modeli indirir. progress_cb(done_bytes, total_bytes) her saniye çağrılır.
@@ -935,6 +984,7 @@ def download_image_model(models_root, model, progress_cb, abort_event):
     size_gb = folder_size_bytes(dest) / GB
     with open(os.path.join(dest, MARKER), "w", encoding="utf-8") as f:
         json.dump({"repo": model["repo"], "size_gb": round(size_gb, 2), "date": time.strftime("%Y-%m-%d %H:%M")}, f)
+    copy_license_files(dest, model)
     return dest
 
 
@@ -3972,6 +4022,7 @@ def install_detector(paths, log_cb, msg, progress_cb=None, abort_event=None):
                 continue
             log_cb(msg("log_det_file", name=f["file"], lic=f["license"]))
             download_file(f["url"], dest, progress_cb, abort_event, need_gb=0.05, sha256=f["sha256"])
+        copy_license_files(d, DETECTOR_LICENSE)
     finally:
         clean_dir(paths.tmp)
     importlib.invalidate_caches()
@@ -4249,7 +4300,7 @@ WEB_MAX_PER_BATCH = 500
 WEB_MAX_MB = 25
 WEB_MIN_DELAY = 1.0
 # Wikimedia vb. sunucular, kim olduğunu ve iletişim adresini söyleyen bir User-Agent ister.
-APP_UA = "AILocalImageStudio/1.4.6 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
+APP_UA = "AILocalImageStudio/1.4.7 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
 
 # Openverse (WordPress): Wikimedia, Flickr, müzeler vb. kaynaklardaki AÇIK LİSANSLI görsellerde arama.
 # Anahtarsız kullanım sınırları (Openverse kaynak kodundaki varsayılanlar): sayfa başına en fazla 20 sonuç,
@@ -6000,6 +6051,7 @@ def download_captioner(models_root, progress_cb, abort_event):
     with open(os.path.join(dest, MARKER), "w", encoding="utf-8") as f:
         json.dump({"repo": CAPTIONER["repo"], "size_gb": round(folder_size_bytes(dest) / GB, 2),
                    "date": time.strftime("%Y-%m-%d %H:%M")}, f)
+    copy_license_files(dest, CAPTIONER_LICENSE)
     return dest
 
 
@@ -6504,6 +6556,7 @@ def download_train_base(models_root, key, progress_cb=None, abort_event=None):
     with open(os.path.join(dest, MARKER), "w", encoding="utf-8") as f:
         json.dump({"repo": sp["base_repo"], "size_gb": round(folder_size_bytes(dest) / GB, 2),
                    "date": time.strftime("%Y-%m-%d %H:%M")}, f)
+    copy_license_files(dest, {"license": sp.get("license", "")})
     return dest
 
 
@@ -6678,7 +6731,31 @@ def train_device(hw):
     return hw.device if (hw.cuda_usable and hw.vram_gb >= 3.5) else "cpu"
 
 
+EMB_CACHE_BYTES = 256 * MB        # metin kodu önbelleği en çok bu kadar (FLUX.2'de tek metin ~8 MB tutar)
+
+
+def tensor_nbytes(obj):
+    """Tensör ya da tensör demetinin bayt boyutu (None = 0)."""
+    if obj is None:
+        return 0
+    if isinstance(obj, (tuple, list)):
+        return sum(tensor_nbytes(o) for o in obj)
+    try:
+        return int(obj.numel() * obj.element_size())
+    except Exception:
+        return 0
+
+
 class LoraTrainer:
+    def _cache_emb(self, text, emb, force=False):
+        """Metin kodunu önbelleğe alır — toplam boyut sınırı aşılmadıkça (boş metin ve ilk metinler hep alınır:
+        örnek görsel üretirken metin kodlayıcı silinmiş olabilir)."""
+        used = getattr(self, "_emb_cache_bytes", 0)
+        b = tensor_nbytes(emb)
+        if force or text == "" or len(self._emb_cache) < 2 or used + b <= EMB_CACHE_BYTES:
+            self._emb_cache[text] = emb
+            self._emb_cache_bytes = used + b
+
     def __init__(self, model_path, model, device, rank=STYLE_RANK, lr=STYLE_LR, resolution=None):
         torch = import_torch()
         import contextlib
@@ -6856,8 +6933,7 @@ class LoraTrainer:
             ids = self.tokenizer(text, padding="max_length", max_length=self.tokenizer.model_max_length,
                                  truncation=True, return_tensors="pt").input_ids.to(self.device)
             emb = self.text_encoder(ids)[0].to("cpu")
-        if len(self._emb_cache) < 4000:
-            self._emb_cache[text] = emb
+        self._cache_emb(text, emb)
         return emb
 
     def encode_text(self, text):
@@ -6869,15 +6945,23 @@ class LoraTrainer:
         finally:
             self.text_encoder.to("cpu")
 
-    def encode_texts(self, texts, progress_cb=None):
+    def encode_texts(self, texts, progress_cb=None, sink=None):
+        """sink(i, kod) verilirse kodlar listede biriktirilmez (binlerce metin RAM'i doldurmasın)."""
         self.text_encoder.to(self.device)
         try:
             out = []
+            ab = getattr(self, "abort_event", None)
             for n, t in enumerate(texts):
-                out.append(self._encode_text_on_device(t))
+                if ab is not None and ab.is_set():
+                    raise AbortedError("user")
+                e = self._encode_text_on_device(t)
+                if sink is not None:
+                    sink(n, e)
+                else:
+                    out.append(e)
                 if progress_cb:
                     progress_cb(n + 1, len(texts))
-            return out
+            return None if sink is not None else out
         finally:
             self.text_encoder.to("cpu")
             free_gpu_memory()
@@ -7287,8 +7371,7 @@ class SDXLLoraTrainer(LoraTrainer):
                 if te is self.text_encoder_2:
                     pooled = out[0]
             emb = (torch.cat(embs, dim=-1).to("cpu"), pooled.to("cpu"))
-        if len(self._emb_cache) < 4000:
-            self._emb_cache[text] = emb
+        self._cache_emb(text, emb)
         return emb
 
     def _te_to(self, dev):
@@ -7304,15 +7387,22 @@ class SDXLLoraTrainer(LoraTrainer):
         finally:
             self._te_to("cpu")
 
-    def encode_texts(self, texts, progress_cb=None):
+    def encode_texts(self, texts, progress_cb=None, sink=None):
         self._te_to(self.device)
         try:
             out = []
+            ab = getattr(self, "abort_event", None)
             for n, t in enumerate(texts):
-                out.append(self._encode_text_on_device(t))
+                if ab is not None and ab.is_set():
+                    raise AbortedError("user")
+                e = self._encode_text_on_device(t)
+                if sink is not None:
+                    sink(n, e)
+                else:
+                    out.append(e)
                 if progress_cb:
                     progress_cb(n + 1, len(texts))
-            return out
+            return None if sink is not None else out
         finally:
             self._te_to("cpu")
             free_gpu_memory()
@@ -7542,8 +7632,7 @@ class FlowLoraTrainer(LoraTrainer):
                 mask = ti.attention_mask.to(self.device).bool()
                 hs = self.text_encoder(input_ids=ids, attention_mask=mask, output_hidden_states=True).hidden_states[-2]
                 emb = hs[0][mask[0]].to("cpu", self.wdtype)
-        if len(self._emb_cache) < 4000:
-            self._emb_cache[text] = emb
+        self._cache_emb(text, emb)
         return emb
 
     def encode_text(self, text):
@@ -7557,8 +7646,9 @@ class FlowLoraTrainer(LoraTrainer):
         finally:
             self._te_off(sw)
 
-    def encode_texts(self, texts, progress_cb=None):
-        """Tüm metinler (ve örnek görselin boş negatif metni) kodlanır; sonra metin kodlayıcı bellekten silinir."""
+    def encode_texts(self, texts, progress_cb=None, sink=None):
+        """Tüm metinler (ve örnek görselin boş negatif metni) kodlanır; sonra metin kodlayıcı bellekten silinir.
+        sink(i, kod) verilirse kodlar listede biriktirilmez."""
         sw = self._te_on_device()
         try:
             out = []
@@ -7566,11 +7656,15 @@ class FlowLoraTrainer(LoraTrainer):
             for n, t in enumerate(texts):
                 if ab is not None and ab.is_set():
                     raise AbortedError("user")
-                out.append(self._encode_text_on_device(t))
+                e = self._encode_text_on_device(t)
+                if sink is not None:
+                    sink(n, e)
+                else:
+                    out.append(e)
                 if progress_cb:
                     progress_cb(n + 1, len(texts))
             self._encode_text_on_device("")
-            return out
+            return None if sink is not None else out
         finally:
             self._te_off(sw)
             self.text_encoder = None
@@ -7737,6 +7831,63 @@ class FlowLoraTrainer(LoraTrainer):
         free_gpu_memory()
 
 
+class TrainStore:
+    """
+    Eğitim verisi deposu (gizli kodlar, ağırlık haritaları, metin kodları). Önce RAM'de tutulur; ortak RAM bütçesi
+    dolunca sonraki öğeler diske yazılır ve eğitim sırasında tek tek okunur. Böylece binlerce görsellik veri setleri
+    RAM'i doldurmadan eğitilebilir (eskiden ilk 1000 görsel alınıyordu). Disk de dolarsa DiskFullError.
+    """
+    MIN_FREE_GB = 2.0
+
+    def __init__(self, folder, budget):
+        self.folder = folder
+        self.budget = budget              # ortak sözlük: {"left": bayt} — birden fazla depo aynı bütçeyi paylaşır
+        self.items = []
+        self.on_disk = 0
+        self.disk_bytes = 0
+
+    def add(self, obj):
+        b = tensor_nbytes(obj)
+        if b <= self.budget["left"]:
+            self.items.append(obj)
+            self.budget["left"] -= b
+            return len(self.items) - 1
+        torch = import_torch()
+        os.makedirs(self.folder, exist_ok=True)
+        if self.on_disk % 64 == 0 and disk_free_gb(self.folder) < self.MIN_FREE_GB + b / GB:
+            raise DiskFullError(drive_label(self.folder), self.MIN_FREE_GB, disk_free_gb(self.folder))
+        p = os.path.join(self.folder, "%07d.pt" % len(self.items))
+        torch.save(obj, p)
+        self.items.append(p)
+        self.on_disk += 1
+        self.disk_bytes += b
+        return len(self.items) - 1
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, i):
+        o = self.items[i]
+        if isinstance(o, str):
+            return import_torch().load(o, map_location="cpu", weights_only=True)
+        return o
+
+    def close(self):
+        self.items = []
+        if os.path.isdir(self.folder):
+            shutil.rmtree(self.folder, ignore_errors=True)
+
+
+def train_ram_budget():
+    """Hazırlanan eğitim verisinin RAM'de tutulabileceği bayt (kalanı diske yazılır)."""
+    try:
+        import psutil
+        avail = psutil.virtual_memory().available
+    except Exception:
+        avail = 8 * GB
+    return int(max(0.5 * GB, min(avail * 0.30, 8 * GB)))
+
+
 class NothingToTrainError(Exception):
     """Eğitilecek veri yok (ör. hiç puan verilmemiş ve otomatik hakem kapalı)."""
 
@@ -7787,7 +7938,7 @@ def _train_progress(progress_cb, clock, steps):
 
 def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sample_each=True, log_cb=None, msg=None,
                        progress_cb=None, abort_event=None, on_sample=None, model_key="sd15", resolution=None,
-                       max_images=1000, clock=time.time, sample_steps=20, learn=None, hide_faces=False):
+                       max_images=None, clock=time.time, sample_steps=20, learn=None, hide_faces=False):
     """
     Derin mod: veri setindeki görsellerle bir LoRA eğitir. Ne öğretildiği (learn: stil / mekân / konu / anatomi)
     veri setinden okunur ve eğitim ayarlarını belirler. Durdurulana ya da süre dolana kadar sürer; her ara kayıtta
@@ -7841,7 +7992,8 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     from PIL import Image
     entries, texts = [], []
     n_img = n_faces = n_with = n_noface = 0
-    for it in data["items"][:max_images]:
+    items = data["items"] if not max_images else data["items"][:max_images]
+    for it in items:
         if abort_event is not None and abort_event.is_set():
             raise AbortedError("user")
         p = dataset_item_path(paths, slug, it)
@@ -7875,17 +8027,57 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     log(msg("tr_log_encode", n=n_img) + ("" if len(entries) == n_img else "  " + msg("tr_log_views", v=len(entries))))
     if hide:
         log(msg("tr_log_faces", faces=n_faces, images=n_with))
-    lat_all, w_all = trainer.encode_images(entries, abort_event=abort_event, skip_bad=True, with_weights=True)
-    # neredeyse tamamı insan olan kesitler atlanır (öğretilecek çevre kalmamış)
-    keep = [i for i, lat in enumerate(lat_all)
-            if lat is not None and (w_all[i] is None or float(w_all[i].float().mean()) >= 0.05)]
-    if not keep:
-        raise NothingToTrainError("no readable images")
-    latents = [lat_all[i] for i in keep]
-    weights = [w_all[i] for i in keep]
-    texts = [texts[i] for i in keep]
-    del lat_all, w_all
-    embs = trainer.encode_texts(texts)
+    # Görseller parça parça kodlanır; hazırlanan veri RAM bütçesi dolunca diske yazılır (binlerce görsel sığar).
+    shutil.rmtree(os.path.join(paths.tmp, "train_cache"), ignore_errors=True)     # yarıda kalmış eski eğitimlerden
+    cache_dir = os.path.join(paths.tmp, "train_cache", "%s_%d" % (ascii_name(slug, 24) or "data", int(time.time())))
+    budget = {"left": train_ram_budget()}
+    lat_store, emb_store = TrainStore(os.path.join(cache_dir, "lat"), budget), TrainStore(
+        os.path.join(cache_dir, "txt"), budget)
+    stores_closed = [False]
+
+    def close_stores():
+        if not stores_closed[0]:
+            stores_closed[0] = True
+            lat_store.close()
+            emb_store.close()
+            shutil.rmtree(cache_dir, ignore_errors=True)
+    try:
+        kept_texts = []
+        disk_full = False
+        told_disk = False
+        chunk = 64
+        for c0 in range(0, len(entries), chunk):
+            part = entries[c0:c0 + chunk]
+            lats, ws = trainer.encode_images(part, abort_event=abort_event, skip_bad=True, with_weights=True)
+            for j, lat in enumerate(lats):
+                # neredeyse tamamı insan olan kesitler atlanır (öğretilecek çevre kalmamış)
+                if lat is None or (ws[j] is not None and float(ws[j].float().mean()) < 0.05):
+                    continue
+                try:
+                    lat_store.add((lat, ws[j]))
+                except DiskFullError:
+                    disk_full = True
+                    break
+                kept_texts.append(texts[c0 + j])
+                if lat_store.on_disk and not told_disk:
+                    told_disk = True
+                    log(msg("tr_log_disk_cache", path=cache_dir))
+            del lats, ws
+            if disk_full:
+                log(msg("tr_log_disk_cap", n=len(lat_store), total=len(entries)))
+                break
+        if not len(lat_store):
+            raise NothingToTrainError("no readable images")
+        texts = kept_texts
+        # aynı metin bir kez kodlanır (bir görselin farklı kesitleri aynı metni kullanır)
+        uniq, text_idx = {}, []
+        for tx in texts:
+            text_idx.append(uniq.setdefault(tx, len(uniq)))
+        trainer.encode_texts(list(uniq), sink=lambda _n, e: emb_store.add(e))
+    except BaseException:
+        close_stores()
+        trainer.close()
+        raise
     sample_prompt = texts[0]
     if hasattr(trainer, "prepare_device"):
         sw = trainer.prepare_device()
@@ -7893,7 +8085,7 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
             log(msg("tr_log_swap", gpu=sw[0], ram=sw[1]))
     base_steps = int(prev.get("steps", 0))
     info = {"name": tag, "tag": tag, "trigger": trigger, "base": model_key, "type": learn, "learn": learn,
-            "dataset": slug, "images": n_img, "views": len(latents), "rank": preset["rank"], "res": trainer.res,
+            "dataset": slug, "images": n_img, "views": len(lat_store), "rank": preset["rank"], "res": trainer.res,
             "faces_hidden": hide, "face_only": face_mode,
             "created": prev.get("created") or time.strftime("%Y-%m-%d %H:%M")}
     ck = _TrainClock(minutes, checkpoint_min, abort_event, clock)
@@ -7939,9 +8131,10 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
             reason = ck.should_stop()
             if reason:
                 break
-            i = _r.randrange(len(latents))
+            i = _r.randrange(len(lat_store))
+            lat_i, w_i = lat_store[i]
             try:
-                losses.append(trainer.step_sft(latents[i], embs[i], weight=weights[i]))
+                losses.append(trainer.step_sft(lat_i, emb_store[text_idx[i]], weight=w_i))
             except AbortedError:
                 try:
                     trainer.opt.zero_grad(set_to_none=True)     # yarım kalan adım öğretilmez
@@ -7963,6 +8156,7 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
         checkpoint(final=True, stopped=(reason == "stop"))
     finally:
         trainer.close()
+        close_stores()
     info["stop_reason"] = reason
     info["path"] = out
     return info

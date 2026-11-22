@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.6"
+APP_VERSION = "1.4.7"
 
 
 def _app_dir():
@@ -47,6 +47,9 @@ import ails_core as core                          # noqa: E402
 
 IS_WIN = core.IS_WIN
 LANG_DIR = os.path.join(APP_DIR, "lang")
+LICENSES_DIR = os.path.join(APP_DIR, "LICENSES")
+# Kullanım koşulları değişirse bu artırılır: herkes bir sonraki açılışta yeniden okuyup onaylar.
+LICENSE_ACK_VERSION = "1"
 
 # --- SRT projesiyle birebir aynı renk paleti ---
 BG, FRM, TXT, LBL, BTN = "#121212", "#1e1e1e", "#ffffff", "#cccccc", "#333333"
@@ -305,7 +308,7 @@ EN = {
     "no_image": "Select an image in the gallery first.",
     "licenses_title": "📜 Licenses & Third-Party Notices",
     "lic_intro": "AI Local Image Studio uses only components whose licenses allow commercial use. Models are downloaded by the user from their official sources; this program does not redistribute model weights.",
-    "lic_rail": "CreativeML OpenRAIL-M / OpenRAIL++-M (SD 1.5, SDXL): commercial use is allowed, but the license's use-based restrictions (Attachment A) apply to every user and must be respected. Full text: see the model page on Hugging Face.",
+    "lic_rail": "CreativeML OpenRAIL-M / OpenRAIL++-M (SD 1.5, SDXL and models derived from them): commercial use is allowed, but the license's use-based restrictions (Attachment A) apply to every user and must be respected. Full texts: LICENSES folder of the program.",
     "lic_addons": "Add-ons (LoRA) that you place into the add-ons folder yourself are under your own license responsibility (v2).",
     "prompt_copied": "Prompt copied to clipboard.",
     # --- v1.0.2: kalite, yüz/el düzeltici, v2 hazırlık penceresi ---
@@ -743,6 +746,24 @@ EN = {
     "lp_network": "🌐 On the server",
     "status_upload": "Sending to the server…",
     "log_custom_missing": "The model file is no longer there: {path}",
+    "tr_log_disk_cache": "💾 Large data set: the prepared training data is written to disk instead of RAM, so every image fits ({path}).",
+    "tr_log_disk_cap": "⚠️ The disk is almost full — training continues with the {n} image views prepared so far (of {total}). Free up disk space to use all of them.",
+    "lic_dlg_title": "📜 Licenses and terms of use",
+    "lic_dlg_intro": "AI Local Image Studio downloads AI models from their official sources only when you choose to. Every model comes with its own license, and by using the program you agree to follow these licenses. Please read the following and confirm.",
+    "lic_dlg_rail_head": "1) Stable Diffusion 1.5, Stable Diffusion XL and every model derived from them ({derived}) are licensed under CreativeML OpenRAIL-M / OpenRAIL++-M. Commercial use is allowed, but the following use restrictions (Attachment A of the license) are mandatory. You agree NOT to use these models, their derivatives or their outputs:",
+    "lic_dlg_derived": "including your own SD 1.5 / SDXL models and LoRAs in the add-ons folder",
+    "lic_dlg_rail_items": "In any way that violates any applicable national, federal, state, local or international law or regulation;\nFor the purpose of exploiting, harming or attempting to exploit or harm minors in any way;\nTo generate or disseminate verifiably false information and/or content with the purpose of harming others;\nTo generate or disseminate personal identifiable information that can be used to harm an individual;\nTo defame, disparage or otherwise harass others;\nFor fully automated decision making that adversely impacts an individual's legal rights or otherwise creates or modifies a binding, enforceable obligation;\nFor any use intended to or which has the effect of discriminating against or harming individuals or groups based on online or offline social behavior or known or predicted personal or personality characteristics;\nTo exploit any of the vulnerabilities of a specific group of persons based on their age, social, physical or mental characteristics, in order to materially distort the behavior of a person pertaining to that group in a manner that causes or is likely to cause that person or another person physical or psychological harm;\nFor any use intended to or which has the effect of discriminating against individuals or groups based on legally protected characteristics or categories;\nTo provide medical advice and medical results interpretation;\nTo generate or disseminate information for the purpose to be used for administration of justice, law enforcement, immigration or asylum processes, such as predicting an individual will commit fraud/crime commitment.",
+    "lic_dlg_rail_out": "The licensors claim no rights in the images you generate, but you are responsible for them and for how they are used, and outputs may not be used in violation of these restrictions either.",
+    "lic_dlg_other_head": "2) The other models and components use permissive licenses that allow commercial use; their copyright and license notices are kept in the program's LICENSES folder:",
+    "lic_dlg_resp": "3) Your responsibility: you are responsible for the content you create and share. Do not create images or videos of real people without their consent, do not infringe copyrights, trademarks or personality rights, and follow the laws of your country. Models and LoRAs that you put into the add-ons folder yourself are under your own license responsibility. Pictures collected from the web for training keep their own licenses (CC BY requires attribution when you share them).",
+    "lic_dlg_binding": "The English license texts are binding; translations are provided for convenience. Full texts: LICENSES folder of the program (also via the 📜 Licenses window).",
+    "lic_dlg_open": "📄 Open full license texts",
+    "lic_dlg_check": "I have read the licenses and use restrictions and I accept them.",
+    "lic_dlg_accept": "Accept and continue",
+    "lic_dlg_exit": "Exit",
+    "lic_accepted_on": "Terms of use accepted on {date}.",
+    "lic_open_folder": "📄 License texts",
+    "confirm_rail": "⚖️ Models marked OpenRAIL come with mandatory use restrictions (the terms you accepted; full text in the LICENSES folder).",
 }
 
 
@@ -1125,6 +1146,134 @@ def _legacy_suggestion():
     return None
 
 
+def open_folder(path):
+    try:
+        os.makedirs(path, exist_ok=True)
+        if IS_WIN:
+            os.startfile(path)  # noqa
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
+def license_groups():
+    """(OpenRAIL türevi model adları, {serbest lisans: [adlar]}) — programın kendi listelerinden."""
+    rail, free = [], {}
+
+    def add(name, lic):
+        if "OpenRAIL" in lic:
+            if not lic.startswith("CreativeML"):
+                rail.append(name)
+            return
+        free.setdefault(lic, [])
+        if name not in free[lic]:
+            free[lic].append(name)
+    for m in core.IMAGE_MODELS:
+        add(m["name"], m["license"])
+    for m in core.LLM_MODELS:
+        add(m["name"] + " (Ollama)", m["license"])
+    for sp in core.TRAIN_SPECS.values():
+        if sp.get("base_name"):
+            add(sp["base_name"], sp["license"])
+    add(core.CAPTIONER["name"], core.CAPTIONER["license"])
+    add(core.UPSCALER["name"], core.UPSCALER["license"])
+    for f in core.DETECTOR_FILES:
+        add({"face": "YuNet", "hand": "MediaPipe palm", "anime": "lbpcascade_animeface"}.get(f["key"], f["file"]),
+            f["license"])
+    return rail, free
+
+
+def license_text_parts():
+    """Kullanım koşulları metni: [(metin, etiket)] — diyalog ve Lisanslar penceresi aynı metni gösterir."""
+    rail, free = license_groups()
+    derived = t("lic_dlg_derived") + ("" if not rail else ", " + ", ".join(rail))
+    parts = [(t("lic_dlg_intro") + "\n\n", "p"), (t("lic_dlg_rail_head", derived=derived) + "\n", "h")]
+    for i, line in enumerate(t("lic_dlg_rail_items").split("\n"), 1):
+        parts.append((f"  {i}. {line}\n", "li"))
+    parts.append(("\n" + t("lic_dlg_rail_out") + "\n\n", "p"))
+    parts.append((t("lic_dlg_other_head") + "\n", "h"))
+    for lic in sorted(free):
+        parts.append((f"  • {lic}: " + ", ".join(free[lic]) + "\n", "li"))
+    parts.append(("\n" + t("lic_dlg_resp") + "\n\n", "h2"))
+    parts.append((t("lic_dlg_binding") + "\n", "small"))
+    return parts
+
+
+def _fill_license_text(txt, base_font):
+    txt.tag_configure("h", font=(base_font[0], base_font[1], "bold"), foreground=WARN, spacing1=4, spacing3=2)
+    txt.tag_configure("h2", font=(base_font[0], base_font[1], "bold"), foreground=BLUE, spacing1=4)
+    txt.tag_configure("li", lmargin1=10, lmargin2=30, spacing1=1)
+    txt.tag_configure("small", foreground="#999999")
+    for text, tag in license_text_parts():
+        txt.insert("end", text, tag)
+
+
+def license_dialog(cfg):
+    """
+    İlk açılışta (ve koşullar değişince bir kez) lisansları ve kullanım kısıtlamalarını gösterir; kabul edilmeden
+    program açılmaz. OpenRAIL-M / OpenRAIL++-M kullanım kısıtlamalarının kullanıcıya bağlayıcı biçimde iletilmesi
+    (lisansın 4. ve 5. maddeleri) böyle sağlanır. Dönüş: True = kabul edildi.
+    """
+    root = _dark_tk(t("lic_dlg_title"), "860x700")
+    root.minsize(700, 560)
+    state = {"ok": False}
+    v_ok = tk.BooleanVar(value=False)
+    tk.Label(root, text=t("lic_dlg_title"), bg=BG, fg=BLUE, font=(UI_FONT, 14, "bold"), anchor="w").pack(
+        fill="x", padx=18, pady=(12, 6))
+    box = tk.Frame(root, bg=BG)
+    box.pack(fill="both", expand=True, padx=18)
+    sb = ttk.Scrollbar(box, orient="vertical")
+    txt = tk.Text(box, bg="#111111", fg=TXT, font=(UI_FONT, 10), wrap="word", relief="flat", yscrollcommand=sb.set,
+                  padx=10, pady=8)
+    sb.config(command=txt.yview)
+    sb.pack(side="right", fill="y")
+    txt.pack(side="left", fill="both", expand=True)
+    _fill_license_text(txt, (UI_FONT, 10))
+    txt.config(state="disabled")
+    bot = tk.Frame(root, bg=BG)
+    bot.pack(fill="x", padx=18, pady=(8, 12))
+    tk.Button(bot, text=t("lic_dlg_open"), bg=BTN, fg=TXT, relief="flat", font=(UI_FONT, 9), cursor="hand2",
+              command=lambda: open_folder(LICENSES_DIR)).pack(anchor="w")
+    tk.Checkbutton(bot, text=t("lic_dlg_check"), variable=v_ok, bg=BG, fg=GREEN, selectcolor=FRM, activebackground=BG,
+                   activeforeground=GREEN, font=(UI_FONT, 10, "bold"), anchor="w",
+                   command=lambda: b_ok.config(state="normal" if v_ok.get() else "disabled",
+                                               bg=ORANGE if v_ok.get() else BTN)).pack(fill="x", pady=(8, 6))
+    row = tk.Frame(bot, bg=BG)
+    row.pack(fill="x")
+
+    def accept():
+        if v_ok.get():
+            state["ok"] = True
+            root.destroy()
+    b_ok = tk.Button(row, text=t("lic_dlg_accept"), bg=BTN, fg="white", font=(UI_FONT, 12, "bold"), relief="flat",
+                     cursor="hand2", command=accept, state="disabled", disabledforeground="#777777")
+    b_ok.pack(side="left", fill="x", expand=True, ipady=6)
+    tk.Button(row, text=t("lic_dlg_exit"), bg=BTN, fg=TXT, font=(UI_FONT, 10), relief="flat", cursor="hand2",
+              command=root.destroy).pack(side="left", padx=(8, 0), ipady=6, ipadx=14)
+    root.mainloop()
+    return state["ok"]
+
+
+def license_ack_needed(cfg):
+    ack = cfg.get("license_ack")
+    return not (isinstance(ack, dict) and ack.get("v") == LICENSE_ACK_VERSION)
+
+
+def ensure_license_ack(cfg):
+    """Koşullar kabul edilmemişse (ilk açılış / koşullar değişti) diyaloğu gösterir. Dönüş: devam edilebilir mi."""
+    if not license_ack_needed(cfg):
+        return True
+    if not license_dialog(cfg):
+        return False
+    cfg["license_ack"] = {"v": LICENSE_ACK_VERSION, "date": time.strftime("%Y-%m-%d %H:%M"),
+                          "app": APP_VERSION}
+    save_pointer(cfg)
+    return True
+
+
 def first_run_dialog(cfg):
     """İlk açılışta veri klasörünü (ve dili) sorar. Dönüş: (klasör, dil) ya da None."""
     drives = core.list_drives()
@@ -1393,6 +1542,9 @@ def launcher_main():
         cfg["data_root"], cfg["lang"] = res
         T.set(LANGS.get(cfg["lang"], "en"))
         save_pointer(cfg)
+
+    if not ensure_license_ack(cfg):
+        return 0
 
     pm = cfg.get("pending_move")
     if isinstance(pm, dict) and pm.get("from") and pm.get("to"):
@@ -3538,6 +3690,9 @@ class ImageStudio:
         self.preview_ref = None
         self.adv_win = None
         self.style_win = None
+        # lisans metinleri, daha önce indirilmiş modellerin klasörlerine de konur (yalnızca eksikse; hızlı)
+        threading.Thread(target=core.ensure_license_copies, args=(paths.models, list(core.IMAGE_MODELS)),
+                         daemon=True).start()
         self.lora_win = None
         self.after_job = None          # iş başarıyla bitince arayüzde çalışacak devam adımı
         self.ratings = core.load_feedback(paths)
@@ -4812,7 +4967,8 @@ class ImageStudio:
                               os.path.join(self.paths.models, "configs", model["family"])))
                 plan["model_config"] = True
         elif model and not core.is_image_model_installed(self.paths.models, model):
-            items.append((model["name"], f"~{model['size_gb']:.1f} GB", os.path.join(self.paths.models, "image")))
+            items.append((f"{model['name']} — {model['license']}", f"~{model['size_gb']:.1f} GB",
+                          os.path.join(self.paths.models, "image")))
             plan["model"] = True
         if train_base and not core.is_train_base_installed(self.paths.models, train_base):
             sp = core.TRAIN_SPECS[train_base]
@@ -4872,8 +5028,10 @@ class ImageStudio:
         for name, size, dest in items:
             lines.append(t("confirm_item", name=name, size=size, path=dest))
             drives[core.drive_label(dest)] = max(0.0, core.disk_free_gb(dest))
-        lines += ["", t("confirm_free", drives=",  ".join(f"{d} {f:.1f} GB" for d, f in drives.items())), "",
-                  t("confirm_q")]
+        lines += ["", t("confirm_free", drives=",  ".join(f"{d} {f:.1f} GB" for d, f in drives.items()))]
+        if any("OpenRAIL" in name for name, _s, _d in items):
+            lines += ["", t("confirm_rail")]
+        lines += ["", t("confirm_q")]
         return messagebox.askyesno(t("confirm_title"), "\n".join(lines), parent=self.r)
 
     # ------------------------------------------------------------- installs / downloads (worker)
@@ -4905,6 +5063,7 @@ class ImageStudio:
         self.status("status_download")
         self.log(t("log_download_start", name=u["name"], size=u["size"], path=dest))
         core.download_file(u["url"], dest, self.bytes_progress, self.abort, need_gb=u["size_gb"])
+        core.copy_license_files(os.path.dirname(dest), core.UPSCALE_LICENSE)
         self.log(t("log_download_done", name=u["name"]))
 
     def _ensure_peft(self, plan):
@@ -6346,9 +6505,22 @@ class ImageStudio:
         w = tk.Toplevel(self.r)
         w.title(t("licenses_title"))
         w.configure(bg=BG)
-        w.geometry("780x560")
-        txt = tk.Text(w, bg="#111111", fg=TXT, font=self.f.n9, wrap="word", relief="flat")
-        txt.pack(fill="both", expand=True, padx=10, pady=10)
+        w.geometry("860x640")
+        top = tk.Frame(w, bg=BG)
+        top.pack(fill="x", padx=10, pady=(10, 0))
+        ttk.Button(top, text=t("lic_open_folder"), command=lambda: open_folder(LICENSES_DIR)).pack(side="left")
+        ack = load_pointer().get("license_ack") or {}
+        if ack.get("date"):
+            tk.Label(top, text=t("lic_accepted_on", date=ack["date"]), bg=BG, fg=GREEN, font=self.f.n9).pack(
+                side="left", padx=10)
+        box = tk.Frame(w, bg=BG)
+        box.pack(fill="both", expand=True, padx=10, pady=10)
+        sb = ttk.Scrollbar(box, orient="vertical")
+        txt = tk.Text(box, bg="#111111", fg=TXT, font=self.f.n9, wrap="word", relief="flat", yscrollcommand=sb.set,
+                      padx=8, pady=6)
+        sb.config(command=txt.yview)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
         lines = [t("licenses_title"), "", t("lic_intro"), "", "— Models —"]
         for m in core.IMAGE_MODELS:
             lines.append(f"• {m['name']}  ({m['repo']}) — {m['license']}")
@@ -6357,18 +6529,21 @@ class ImageStudio:
         for k, sp in core.TRAIN_SPECS.items():
             if sp.get("base_repo"):
                 lines.append(f"• {sp['base_name']}  ({sp['base_repo']}, training) — {sp['license']}")
+        lines.append(f"• {core.CAPTIONER['name']}  ({core.CAPTIONER['repo']}) — {core.CAPTIONER['license']}")
         lines.append(f"• {core.UPSCALER['name']} (xinntao/Real-ESRGAN) — {core.UPSCALER['license']}")
         lines.append("• YuNet face detector (opencv/opencv_zoo) — MIT")
         lines.append("• MediaPipe palm detector (opencv/opencv_zoo, Google) — Apache-2.0")
         lines.append("• lbpcascade_animeface (nagadomi) — MIT")
         lines += ["", t("lic_rail"), "", "— Software —",
-                  "• Python — PSF License", "• PyTorch — BSD-3-Clause", "• Hugging Face diffusers / transformers / "
-                  "accelerate / huggingface_hub / safetensors — Apache-2.0", "• Ollama — MIT",
+                  "• Python — PSF License", "• Tcl/Tk — Tcl/Tk License (BSD-style)", "• PyTorch — BSD-3-Clause",
+                  "• Hugging Face diffusers / transformers / accelerate / huggingface_hub / safetensors / tokenizers / "
+                  "peft — Apache-2.0", "• sentencepiece — Apache-2.0", "• protobuf — BSD-3-Clause", "• Ollama — MIT",
                   "• Pillow — MIT-CMU (HPND)", "• NumPy — BSD-3-Clause", "• psutil — BSD-3-Clause",
-                  "• requests — Apache-2.0", "• OpenCV (opencv-python-headless) — Apache-2.0",
-                  "• NVIDIA CUDA runtime (via PyTorch wheels) — NVIDIA EULA", "",
-                  t("lic_addons")]
-        txt.insert("1.0", "\n".join(lines))
+                  "• requests — Apache-2.0", "• OpenCV (opencv-python-headless) — Apache-2.0 (bundled FFmpeg: LGPL-2.1)",
+                  "• NVIDIA CUDA runtime (via PyTorch wheels) — NVIDIA CUDA EULA (redistributable components)", "",
+                  t("lic_addons"), "", "— " + t("lic_dlg_title") + " —", ""]
+        txt.insert("1.0", "\n".join(lines) + "\n")
+        _fill_license_text(txt, (UI_FONT, 9))
         txt.config(state="disabled")
 
     # ------------------------------------------------------------- shutdown (SRT ile aynı davranış)
@@ -6450,6 +6625,8 @@ def gui_main():
     paths = core.DataPaths(cfg["data_root"])
     core.apply_env(paths)
     T.set(LANGS.get(cfg.get("lang") or "English", "en"))
+    if not ensure_license_ack(cfg):      # program doğrudan kendi ortamından açıldıysa da koşullar sorulur
+        return 0
     root = tk.Tk()
     ImageStudio(root, paths)
     root.mainloop()

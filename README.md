@@ -36,6 +36,8 @@ your own language into English prompts. The interface is available in **English,
     RAM (SDXL 16 GB, FLUX.2 24 GB, Z-Image 28 GB). Otherwise the choice is marked and never started;
     out-of-memory retries at a lower resolution.
     **Self-learning** learns from your 👍 / 👎 ratings and an automatic judge (Diffusion-DPO, SD 1.5).
+    Every image of the dataset is used — thousands are fine: when the prepared data does not fit in RAM it is
+    cached on the data drive and removed when training ends.
 - **Your own models:** drop a single-file SD 1.5 or SDXL model (`.safetensors`, e.g. from Civitai or Hugging Face)
   into `addons\models\` and it appears in the model list as 📦. The program never downloads them; `.ckpt` / `.pt`
   files are never opened (they can contain code). The first time, it needs either the matching built-in model or a
@@ -117,6 +119,10 @@ Models and third-party components are downloaded separately and keep their own l
 
 ⚠️ The **use restrictions** of the OpenRAIL licenses (Attachment A) also apply to everyone who generates images with
 those models.
+
+At first start the program shows the model licenses and these use restrictions and asks you to accept them. All
+license texts are in the `LICENSES` folder (`LICENSES/THIRD_PARTY_NOTICES.md` lists every component, its license and
+source), and a copy is placed next to every downloaded model (`LICENSE_<name>.txt`).
 
 ## 🤝 Responsible use
 
