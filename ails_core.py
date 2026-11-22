@@ -4300,7 +4300,7 @@ WEB_MAX_PER_BATCH = 500
 WEB_MAX_MB = 25
 WEB_MIN_DELAY = 1.0
 # Wikimedia vb. sunucular, kim olduğunu ve iletişim adresini söyleyen bir User-Agent ister.
-APP_UA = "AILocalImageStudio/1.4.7 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
+APP_UA = "AILocalImageStudio/1.4.8 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
 
 # Openverse (WordPress): Wikimedia, Flickr, müzeler vb. kaynaklardaki AÇIK LİSANSLI görsellerde arama.
 # Anahtarsız kullanım sınırları (Openverse kaynak kodundaki varsayılanlar): sayfa başına en fazla 20 sonuç,
@@ -6603,7 +6603,7 @@ def find_people(models_root, img):
     return [(float(d[0]), float(d[1]), float(d[2]), float(d[3])) for d in det.faces(rgb, HIDE_FACE_SCORE)]
 
 
-def hide_people(img, faces):
+def hide_people(img, faces, body_weight=None):
     """
     Mekân eğitimi için: yüzleri tanınmayacak biçimde bulanıklaştırır ve bir ağırlık haritası döndürür.
     Yüz (saç/çene payıyla) = 0 → hiç öğretilmez (bulanık yüz de öğretilmez); yüzden tahmin edilen gövde = 0.35 →
@@ -6619,7 +6619,8 @@ def hide_people(img, faces):
         bx0, bx1 = int(max(0, cx - 1.8 * w)), int(min(W, cx + 1.8 * w))      # omuzlar ~3.6 yüz genişliği
         by0, by1 = int(max(0, y - 0.4 * h)), int(min(H, y + 8.0 * h))         # boy ~8 yüz yüksekliği
         if bx1 > bx0 and by1 > by0:
-            wmap[by0:by1, bx0:bx1] = np.minimum(wmap[by0:by1, bx0:bx1], PLACE_PERSON_WEIGHT)
+            wmap[by0:by1, bx0:bx1] = np.minimum(wmap[by0:by1, bx0:bx1],
+                                                PLACE_PERSON_WEIGHT if body_weight is None else body_weight)
         fx0, fx1 = int(max(0, cx - 0.8 * w)), int(min(W, cx + 0.8 * w))
         fy0, fy1 = int(max(0, cy - 0.95 * h)), int(min(H, cy + 0.8 * h))
         if fx1 > fx0 and fy1 > fy0:
@@ -6845,7 +6846,8 @@ class LoraTrainer:
         if view == "face":
             crop, wmap = face_crop(img, people[0])
             return self._prep(crop, "c"), self._prep_weight(wmap, "c")
-        shown, wmap = hide_people(img, people)
+        # anatomi: beden tam öğretilir, yalnızca yüz gizlenir; mekân: insanlar az öğretilir
+        shown, wmap = hide_people(img, people, getattr(self, "person_weight", None))
         return self._prep(shown, view), self._prep_weight(wmap, view)
 
     def _prep_weight(self, wmap, view="c"):
@@ -7936,6 +7938,42 @@ def _train_progress(progress_cb, clock, steps):
         progress_cb(f, steps, clock.elapsed())
 
 
+def item_tags_text(item):
+    """Veri seti hazırlayıcısının yazdığı etiketler ('full body, side view, standing'): açıklamada zaten
+    geçenler tekrar eklenmez."""
+    tags = item.get("tags") or ""
+    if isinstance(tags, (list, tuple)):
+        tags = ", ".join(str(x) for x in tags)
+    cap = (item.get("caption") or "").lower()
+    return ", ".join(t.strip() for t in str(tags).split(",") if t.strip() and t.strip().lower() not in cap)
+
+
+TRAIN_SPEED_FILE = "train_speed.json"
+
+
+def record_train_speed(paths, model_key, res, sec_per_step, steps, device=""):
+    """Bu bilgisayardaki gerçek eğitim hızı (yalnızca adım süresi; hazırlık ve ara kayıtlar hariç).
+    Veri seti hazırlayıcısı eğitim süresi önerisini bununla hesaplar."""
+    p = os.path.join(paths.logs, TRAIN_SPEED_FILE)
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            d = {}
+    except Exception:
+        d = {}
+    d[f"{model_key}@{int(res)}"] = {"sec_per_step": round(float(sec_per_step), 4), "steps": int(steps),
+                                     "device": str(device), "date": time.strftime("%Y-%m-%d %H:%M")}
+    try:
+        os.makedirs(paths.logs, exist_ok=True)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=1)
+        os.replace(tmp, p)
+    except OSError:
+        pass
+
+
 def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sample_each=True, log_cb=None, msg=None,
                        progress_cb=None, abort_event=None, on_sample=None, model_key="sd15", resolution=None,
                        max_images=None, clock=time.time, sample_steps=20, learn=None, hide_faces=False):
@@ -7944,7 +7982,8 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     veri setinden okunur ve eğitim ayarlarını belirler. Durdurulana ya da süre dolana kadar sürer; her ara kayıtta
     LoRA kaydedilir (istenirse örnek görsel üretilir). Aynı LoRA yeniden eğitilirse kaldığı yerden devam eder;
     başka bir eğitime ait LoRA asla ezilmez (yeni ad alınır).
-    hide_faces (yalnızca mekân): yüzler bulanıklaştırılır ve öğretilmez, insanlar az öğretilir — çevre öne çıkar.
+    hide_faces (mekân / anatomi): yüzler bulanıklaştırılır ve öğretilmez. Mekânda insanlar az öğretilir (çevre öne
+    çıkar); anatomide beden tam öğretilir, yalnızca belirli bir yüz öğrenilmez.
     progress_cb(kesir|None, adım, geçen_sn). Dönüş: bilgi sözlüğü.
     """
     log = log_cb or (lambda s: None)
@@ -7964,7 +8003,7 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     os.makedirs(lora_dir, exist_ok=True)
     out, prev = pick_lora_path(lora_dir, base_name, slug, learn, preset["rank"], base=model_key)
     name = os.path.splitext(os.path.basename(out))[0]
-    hide = bool(hide_faces) and learn == "place"
+    hide = bool(hide_faces) and learn in ("place", "anatomy")
     face_mode = learn == "face"
     if (hide or face_mode) and not (detector_files_ok(paths.models) and cv2_installed(paths)):
         raise RuntimeError("face detector is not installed (needed to " + ("find faces)" if face_mode else
@@ -7981,6 +8020,7 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
     if name != base_name and os.path.exists(os.path.join(lora_dir, base_name + ".safetensors")):
         log(msg("tr_log_keep_old", old=base_name + ".safetensors", new=name + ".safetensors"))
     trainer = make_trainer(paths, model_key, device, rank=preset["rank"], lr=preset["lr"], resolution=resolution)
+    trainer.person_weight = 1.0 if learn == "anatomy" else None
     trainer.abort_event = abort_event
     trainer.noise_offset = preset["noise_offset"]
     if prev:
@@ -8016,7 +8056,7 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
         if people:
             n_faces += len(people)
             n_with += 1
-        text = ", ".join(x for x in (trigger, it.get("caption", "")) if x)
+        text = ", ".join(x for x in (trigger, it.get("caption", ""), item_tags_text(it)) if x)
         for v in image_views(w, h, preset["views"]):
             entries.append((p, v, people or []) if hide else (p, v))
             texts.append(text)
@@ -8026,7 +8066,7 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
         raise NothingToTrainError("no readable images")
     log(msg("tr_log_encode", n=n_img) + ("" if len(entries) == n_img else "  " + msg("tr_log_views", v=len(entries))))
     if hide:
-        log(msg("tr_log_faces", faces=n_faces, images=n_with))
+        log(msg("tr_log_faces_anatomy" if learn == "anatomy" else "tr_log_faces", faces=n_faces, images=n_with))
     # Görseller parça parça kodlanır; hazırlanan veri RAM bütçesi dolunca diske yazılır (binlerce görsel sığar).
     shutil.rmtree(os.path.join(paths.tmp, "train_cache"), ignore_errors=True)     # yarıda kalmış eski eğitimlerden
     cache_dir = os.path.join(paths.tmp, "train_cache", "%s_%d" % (ascii_name(slug, 24) or "data", int(time.time())))
@@ -8127,6 +8167,7 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
 
     try:
         report(force=True)
+        step_time = [0.0, 0]
         while True:
             reason = ck.should_stop()
             if reason:
@@ -8134,7 +8175,11 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
             i = _r.randrange(len(lat_store))
             lat_i, w_i = lat_store[i]
             try:
+                t_step = time.perf_counter()
                 losses.append(trainer.step_sft(lat_i, emb_store[text_idx[i]], weight=w_i))
+                if trainer.steps > 3:                   # ilk adımlar (ısınma) sayılmaz
+                    step_time[0] += time.perf_counter() - t_step
+                    step_time[1] += 1
             except AbortedError:
                 try:
                     trainer.opt.zero_grad(set_to_none=True)     # yarım kalan adım öğretilmez
@@ -8151,6 +8196,10 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
                     reason = "stop"
                     break
         report(force=True)
+        if step_time[1] >= 20:
+            sps = step_time[0] / step_time[1]
+            info["sec_per_step"] = round(sps, 4)
+            record_train_speed(paths, model_key, trainer.res, sps, step_time[1], device)
         if reason == "stop":
             log(msg("tr_log_stopping"))
         checkpoint(final=True, stopped=(reason == "stop"))

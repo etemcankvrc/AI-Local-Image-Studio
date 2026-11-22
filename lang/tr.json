@@ -547,7 +547,7 @@
   "v2_log_named": "Dosyalar veri setinin adıyla kaydedildi: {base}_0001.jpg …",
   "v2_log_caption_auto": "📝 Yeni görseller otomatik açıklanıyor…",
   "v2_log_caption_later": "ℹ️ Açıklamalar ▶ BAŞLAT'a (ya da 🔍 Şimdi oku'ya) basınca yazılacak — görsel motoru o zaman kurulur.",
-  "v2_hide_faces": "🙈 Yüzleri gizle, çevreyi öne çıkar (Mekân)",
+  "v2_hide_faces": "🙈 Yüzleri gizle (Mekân, Anatomi)",
   "tr_log_faces": "🙈 Yüzler gizleniyor: {images} görselde {faces} yüz bulundu. Yüzler bulanıklaştırılıp öğretilmeyecek, insanlar daha az öğretilecek; çevre öne çıkacak.",
   "tr_log_hide_off": "⚠️ Bunun için yüz algılayıcı gerekiyor (Yüz ve El Düzeltici ile kurulur); kurulu olmadığı için eğitim başlatılmadı.",
   "tr_log_keep_old": "ℹ️ '{old}' başka bir eğitime ait (başka veri seti ya da tür) — olduğu gibi korunuyor. Yeni eğitim '{new}' olarak kaydedilecek.",
@@ -691,5 +691,7 @@
   "lic_dlg_exit": "Çıkış",
   "lic_accepted_on": "Kullanım koşulları {date} tarihinde kabul edildi.",
   "lic_open_folder": "📄 Lisans metinleri",
-  "confirm_rail": "⚖️ OpenRAIL işaretli modeller zorunlu kullanım kısıtlamalarıyla gelir (kabul ettiğin koşullar; tam metin LICENSES klasöründe)."
+  "confirm_rail": "⚖️ OpenRAIL işaretli modeller zorunlu kullanım kısıtlamalarıyla gelir (kabul ettiğin koşullar; tam metin LICENSES klasöründe).",
+  "v2_hint_applied": "⏱ “{name}” bir eğitim önerisiyle geldi: {model}, ~{m} dk, her {ck} dk ara kayıt — ayarlara yazıldı (değiştirebilirsiniz).",
+  "tr_log_faces_anatomy": "🙈 Yüzler gizleniyor: {images} görselde {faces} yüz bulanıklaştırıldı ve öğretilmeyecek; bedenler tam öğretilir (LoRA belirli bir yüzü öğrenmez)."
 }

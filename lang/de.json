@@ -547,7 +547,7 @@
   "v2_log_named": "Die Dateien sind nach dem Datensatz benannt: {base}_0001.jpg …",
   "v2_log_caption_auto": "📝 Neue Bilder werden automatisch beschrieben…",
   "v2_log_caption_later": "ℹ️ Die Beschreibungen werden beim Drücken von ▶ STARTEN (oder 🔍 Jetzt lesen) erstellt — dann wird die Bild-Engine installiert.",
-  "v2_hide_faces": "🙈 Gesichter verbergen, Umgebung betonen (Ort)",
+  "v2_hide_faces": "🙈 Gesichter ausblenden (Ort, Anatomie)",
   "tr_log_faces": "🙈 Gesichter werden verborgen: {faces} Gesicht(er) in {images} Bild(ern) gefunden. Gesichter werden unkenntlich gemacht und nicht gelernt, Personen schwächer gelernt — die Umgebung steht im Vordergrund.",
   "tr_log_hide_off": "⚠️ Dafür wird der Gesichtsdetektor benötigt (wird mit dem Gesichts- und Handkorrektor installiert); er ist nicht installiert, daher wurde das Training nicht gestartet.",
   "tr_log_keep_old": "ℹ️ „{old}“ gehört zu einem anderen Training (anderer Datensatz oder andere Art) — es bleibt erhalten. Das neue Training wird als „{new}“ gespeichert.",
@@ -691,5 +691,7 @@
   "lic_dlg_exit": "Beenden",
   "lic_accepted_on": "Nutzungsbedingungen akzeptiert am {date}.",
   "lic_open_folder": "📄 Lizenztexte",
-  "confirm_rail": "⚖️ Mit OpenRAIL gekennzeichnete Modelle haben verbindliche Nutzungsbeschränkungen (die von dir akzeptierten Bedingungen; Volltext im Ordner LICENSES)."
+  "confirm_rail": "⚖️ Mit OpenRAIL gekennzeichnete Modelle haben verbindliche Nutzungsbeschränkungen (die von dir akzeptierten Bedingungen; Volltext im Ordner LICENSES).",
+  "v2_hint_applied": "⏱ „{name}“ bringt eine Trainingsempfehlung mit: {model}, ~{m} Min., Zwischenstand alle {ck} Min. — eingetragen (du kannst es ändern).",
+  "tr_log_faces_anatomy": "🙈 Gesichter werden ausgeblendet: {faces} Gesicht(er) in {images} Bild(ern) werden verwischt und nicht gelernt; die Körper werden vollständig gelernt (die LoRA lernt kein bestimmtes Gesicht)."
 }

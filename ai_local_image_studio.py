@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.7"
+APP_VERSION = "1.4.8"
 
 
 def _app_dir():
@@ -619,7 +619,11 @@ EN = {
     "v2_log_named": "Files are named after the dataset: {base}_0001.jpg …",
     "v2_log_caption_auto": "📝 New images are being described automatically…",
     "v2_log_caption_later": "ℹ️ The descriptions will be written when you press ▶ START (or 🔍 Read now) — the image engine is installed then.",
-    "v2_hide_faces": "🙈 Hide faces, focus on the surroundings (Place)",
+    "v2_hide_faces": "🙈 Hide faces (Place, Anatomy)",
+    "v2_hint_applied": "⏱ “{name}” comes with a training suggestion: {model}, ~{m} min, checkpoint every {ck} min — "
+                       "filled in (you can change it).",
+    "tr_log_faces_anatomy": "🙈 Hiding faces: {faces} face(s) in {images} image(s) are blurred and not learned; "
+                            "the bodies are learned fully (the LoRA does not learn a specific face).",
     "tr_log_faces": "🙈 Hiding faces: {faces} face(s) found in {images} image(s). Faces are blurred and not learned, people are learned less — the surroundings come first.",
     "tr_log_hide_off": "⚠️ This needs the face detector (installed with the Face & Hand Fixer); it isn't installed, so training was not started.",
     "tr_log_keep_old": "ℹ️ '{old}' belongs to another training (a different dataset or type) — it is kept. The new training is saved as '{new}'.",
@@ -1652,10 +1656,15 @@ def set_dark(rt, fonts):
 class KeyCombo:
     """Ekranda çeviri metni gösteren, değişkende ise sabit anahtar tutan combobox."""
 
+    _n = 0
+
     def __init__(self, parent, var, items_fn, width=14, on_change=None):
         self.var, self.items_fn, self.on_change = var, items_fn, on_change
         self.keys = []
-        self.cb = ttk.Combobox(parent, state="readonly", width=width)
+        KeyCombo._n += 1
+        self._style = f"KC{KeyCombo._n}.TCombobox"       # TCombobox'tan türer: görünüş aynı
+        self.cb = ttk.Combobox(parent, state="readonly", width=width, style=self._style,
+                               postcommand=self._widen_popdown)
         self.cb.bind("<<ComboboxSelected>>", self._sel)
         self._tid = var.trace_add("write", lambda *a: self.refresh())
         self.cb.bind("<Destroy>", self._on_destroy, add="+")
@@ -1682,6 +1691,25 @@ class KeyCombo:
                 self.cb.current(i)
         elif self.keys:
             self.cb.set("")
+
+    def _widen_popdown(self):
+        """Açılan liste kutudan dar kalıp yazıları kesmesin: en uzun satır kadar genişler (ekrana sığacak kadar)."""
+        try:
+            vals = list(self.cb.cget("values") or ())
+            if not vals:
+                return
+            pd = self.cb.tk.call("ttk::combobox::PopdownWindow", str(self.cb))
+            fnt = tkfont.Font(root=self.cb, font=self.cb.tk.call(f"{pd}.f.l", "cget", "-font"))
+            need = max(fnt.measure(str(v)) for v in vals) + 34          # kaydırma çubuğu + kenar
+            have = self.cb.winfo_width()
+            extra = max(0, need - have)
+            x = self.cb.winfo_rootx()
+            sw = self.cb.winfo_screenwidth()
+            extra = min(extra, max(0, sw - 8 - x - have) + max(0, x - 8))
+            dx = -max(0, x + have + extra - (sw - 8))                     # sağa taşarsa sola kaydır
+            ttk.Style().configure(self._style, postoffset=(dx, 0, extra, 0))
+        except Exception:
+            pass
 
     def _sel(self, _e=None):
         i = self.cb.current()
@@ -2040,8 +2068,34 @@ class StyleStudioWindow:
             st = core.dataset_stats(self.paths, slug, data)
             self.lbl_stats.config(text=t("v2_stats", n=st["count"], mb=st["bytes"] / core.MB, local=st["local"],
                                          web=st["web"], video=st["video"], date=data.get("created", "")))
+            self._apply_train_hint(slug, data)
         self.lbl_tag_hint.config(text=t("v2_tag_hint_" + core.norm_learn(self.v_learn.get())))
         self.update_state()
+
+    def _apply_train_hint(self, slug, data):
+        """Eğitim önerisiyle gelen veri seti (train_hint): önerilen model, süre ve ara kayıt aralığı bir kez
+        (veri seti seçilince) doldurulur; sonra kullanıcı istediği gibi değiştirir."""
+        hint = data.get("train_hint") if isinstance(data.get("train_hint"), dict) else None
+        if not hint or getattr(self, "_hint_slug", None) == slug:
+            return
+        self._hint_slug = slug
+        self.v_mode.set("deep")                    # veri seti LoRA eğitimi için hazırlandı
+        if hint.get("model") in core.TRAIN_BASES:
+            self.v_base.set(hint["model"])
+        if hint.get("minutes"):
+            self.v_duration.set("minutes")
+            self.v_minutes.set(str(int(hint["minutes"])))
+        if hint.get("checkpoint"):
+            ck = min(self.CHECKPOINTS, key=lambda c: abs(int(c) - int(hint["checkpoint"])))
+            self.v_ckpt.set(ck)
+        if "hide_faces" in hint:
+            self.v_hide.set(bool(hint["hide_faces"]))
+        name = core.IMAGE_MODEL_BY_KEY.get(hint.get("model"), {}).get("name", hint.get("model", ""))
+        if hint.get("minutes"):
+            self.app.log(t("v2_hint_applied", name=data.get("name", slug), model=name, m=int(hint["minutes"]),
+                           ck=self.v_ckpt.get()))
+        for kc in self.combos:
+            kc.refresh()
 
     def on_learn_change(self):
         """'Ne öğretiliyor?' değişti: seçili veri setine kaydedilir; açıklamalar ve etiket ipucu güncellenir."""
@@ -2137,7 +2191,8 @@ class StyleStudioWindow:
             self.lbl_mode.config(text=t("v2_mode_light_info", what=what) + "  " + t("fit_ok"), fg=GREEN)
         self.kc_learn.cb.config(state="disabled" if busy else "readonly")
         self.kc_base.cb.config(state="readonly" if (mode == "deep" and not busy) else "disabled")
-        self.chk_hide.config(state="normal" if (learn == "place" and mode == "deep" and not busy) else "disabled")
+        self.chk_hide.config(state="normal" if (learn in ("place", "anatomy") and mode == "deep" and not busy)
+                             else "disabled")
         self.chk_judge.config(state="normal" if mode == "self" else "disabled")
         self.b_caption.state(["!disabled"] if (has_ds and not busy) else ["disabled"])
         self.b_start.config(state="normal" if not busy else "disabled")
@@ -2483,7 +2538,7 @@ class StyleStudioWindow:
             data["face_ok"] = True
             core.save_dataset(self.paths, slug, data)
         # Mekân (yüzleri gizlemek) ve Yüz (yüzü bulmak) için yüz algılayıcı (Yüz ve El Düzeltici ile aynı, ~50 MB)
-        hide = mode == "deep" and learn == "place" and self.v2.get("hide_faces", True)
+        hide = mode == "deep" and learn in ("place", "anatomy") and self.v2.get("hide_faces", True)
         need_det = hide or (mode == "deep" and learn == "face")
         plan = self.app._plan(engine=True, model=core.IMAGE_MODEL_BY_KEY[base] if train else None,
                               peft=train, captioner=need_cap, detailer=need_det,

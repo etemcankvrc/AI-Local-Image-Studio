@@ -1,8 +1,16 @@
-# 🎨 AI Local Image Studio v1.4.7
+# 🎨 AI Local Image Studio v1.4.8
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.8'de yeni — açılan listeler kesilmiyor, eğitim hızı ölçülüyor, anatomide yüz gizleme
+
+- **Açılan listeler artık yazıyı kesmiyor:** programdaki bütün seçim listeleri açılınca en uzun satır kadar genişler (ekrana sığacak kadar). 6. bölümdeki model satırlarının sonu (boyut, uyum, açıklama) artık okunur.
+- **Gerçek eğitim hızı ölçülür:** her derin eğitimde adım başına süre (hazırlık ve ara kayıtlar hariç) veri klasöründeki `logs\train_speed.json` dosyasına yazılır. Veri seti hazırlama araçları eğitim süresini buna göre önerebilir.
+- **Veri setinden gelen eğitim önerisi:** bir veri setinde önerilen eğitim ayarları (`train_hint`: model, süre, ara kayıt, yüz gizleme) varsa, 🎓 Eğitim / Görsel Analiz'de seçilince mod "Derin" olur ve bu değerler ayarlara yazılır (log'da yazar, sonra değiştirebilirsiniz).
+- **Etiketler eğitim metnine girer:** veri setindeki görsellerin `tags` alanı (ör. "full body, side view, standing") eğitim metnine eklenir; açıklamada zaten geçenler tekrar eklenmez.
+- **Anatomi eğitiminde yüzleri gizle:** "🙈 Yüzleri gizle" artık Anatomi'de de çalışır. Yüzler bulanıklaştırılır ve öğretilmez, bedenler tam öğretilir; LoRA belirli bir yüzü öğrenmez. Mekân'da eskisi gibi insanlar az öğretilir.
 
 ## v1.4.7'de yeni — eğitim tüm görselleri kullanır, ilk açılışta lisans onayı
 
