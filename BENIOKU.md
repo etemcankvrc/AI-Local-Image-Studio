@@ -1,8 +1,26 @@
-# 🎨 AI Local Image Studio v1.4.6
+# 🎨 AI Local Image Studio v1.4.8
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+## v1.4.8'de yeni — açılan listeler kesilmiyor, eğitim hızı ölçülüyor, anatomide yüz gizleme
+
+- **Açılan listeler artık yazıyı kesmiyor:** programdaki bütün seçim listeleri açılınca en uzun satır kadar genişler (ekrana sığacak kadar). 6. bölümdeki model satırlarının sonu (boyut, uyum, açıklama) artık okunur.
+- **Gerçek eğitim hızı ölçülür:** her derin eğitimde adım başına süre (hazırlık ve ara kayıtlar hariç) veri klasöründeki `logs\train_speed.json` dosyasına yazılır. Veri seti hazırlama araçları eğitim süresini buna göre önerebilir.
+- **Veri setinden gelen eğitim önerisi:** bir veri setinde önerilen eğitim ayarları (`train_hint`: model, süre, ara kayıt, yüz gizleme) varsa, 🎓 Eğitim / Görsel Analiz'de seçilince mod "Derin" olur ve bu değerler ayarlara yazılır (log'da yazar, sonra değiştirebilirsiniz).
+- **Etiketler eğitim metnine girer:** veri setindeki görsellerin `tags` alanı (ör. "full body, side view, standing") eğitim metnine eklenir; açıklamada zaten geçenler tekrar eklenmez.
+- **Anatomi eğitiminde yüzleri gizle:** "🙈 Yüzleri gizle" artık Anatomi'de de çalışır. Yüzler bulanıklaştırılır ve öğretilmez, bedenler tam öğretilir; LoRA belirli bir yüzü öğrenmez. Mekân'da eskisi gibi insanlar az öğretilir.
+
+## v1.4.7'de yeni — eğitim tüm görselleri kullanır, ilk açılışta lisans onayı
+
+- **Eğitimde görsel sınırı kalktı.** Binlerce görsel yüklenince eğitim yalnızca ~956 görsel alıyordu: RAM'i korumak için 1000 görsellik bir sınır vardı (okunamayanlar da düşülünce 956 kalıyordu). Artık veri setindeki **her görsel** kullanılır.
+  - Hazırlanan eğitim verisi önce RAM'de tutulur; RAM'e sığmayan kısmı geçici olarak veri klasöründeki `tmp\train_cache` içine yazılır ve eğitim bitince (ya da durdurulunca) silinir. Log'da "💾 Büyük veri seti: … diske yazılıyor" satırı görünür.
+  - Aynı açıklama bir kez kodlanır; metin önbelleği de sınırlıdır, böylece binlerce görselde RAM dolmaz.
+  - Disk dolmak üzereyse eğitim o ana kadar hazırlananlarla sürer ve log'da yazar.
+- **İlk açılışta lisans onayı.** Program ilk açılışta (ve kullanım koşulları değişirse bir kez daha) modellerin lisanslarını ve **SD 1.5 / SDXL'in OpenRAIL kullanım kısıtlamalarını** (lisansın Ek A'sındaki 11 madde: yasa dışı kullanım, reşit olmayanlara zarar, karalama / taciz, kişisel veriyle zarar, ayrımcılık…) gösterir. "Okudum, kabul ediyorum" işaretlenmeden devam edilmez. Kabul tarihi saklanır ve Lisanslar penceresinde (başlığın yanındaki **📜** düğmesi) görünür.
+- **`LICENSES` klasörü:** tüm lisans metinleri program klasöründe; `THIRD_PARTY_NOTICES.md` hangi bileşenin hangi lisansla nereden geldiğini listeler. İndirilen her modelin klasörüne de `LICENSE_<ad>.txt` konur (daha önce indirilmiş modellere de).
+- İndirme onay penceresinde her modelin lisansı yazar; OpenRAIL modelleri için kısıtlamalar hatırlatılır.
 
 ## v1.4.6'da yeni — üretimde canlı sayaç
 
@@ -251,7 +269,7 @@ D:\AI Local Image Studio\
   runtime\venv\     ← görsel motoru (PyTorch, diffusers…)
   runtime\python\   ← programa özel Python 3.12 (seçildiyse)
   runtime\tools\    ← uv aracı (programa özel Python'u kuran araç)
-  models\           ← görsel modelleri, Real-ESRGAN ve yüz/el algılayıcı (models\detect)
+  models\           ← görsel modelleri, Real-ESRGAN ve yüz/el algılayıcı (models\detect); her model klasöründe LICENSE_<ad>.txt
   datasets\         ← veri setleri (görseller, video kareleri, açıklamalar, tür — dataset.json)
   addons\           ← kullanıcının koyduğu LoRA eklentileri (program indirmez)
   addons\models\    ← kullanıcının koyduğu tam modeller (tek dosya SD 1.5 / SDXL .safetensors)
@@ -324,7 +342,7 @@ D:\AI Local Image Studio\
 | CPython 3.12 (python-build-standalone) | PSF-2.0 | Programa özel Python (isteğe bağlı) |
 | OpenCV (aynı paket) + içindeki FFmpeg | Apache-2.0 + LGPL-2.1 (dinamik) | Videodan kare çıkarma |
 
-⚠️ OpenRAIL lisanslarının **kullanım kısıtlamaları** (Ek A) son kullanıcıya da geçer: bu modellerle görsel üreten herkes bu kısıtlamalara uymak zorundadır. Programın kaynak kodu **Apache-2.0** lisanslıdır (depodaki [LICENSE](../LICENSE)).
+⚠️ OpenRAIL lisanslarının **kullanım kısıtlamaları** (Ek A) son kullanıcıya da geçer: bu modellerle görsel üreten herkes bu kısıtlamalara uymak zorundadır. Program bu kısıtlamaları ilk açılışta gösterip onaylatır; tüm lisans metinleri `LICENSES` klasöründedir (bkz. `LICENSES/THIRD_PARTY_NOTICES.md`). Programın kaynak kodu **Apache-2.0** lisanslıdır (depodaki [LICENSE](../LICENSE)).
 
 ## 4 GB VRAM + 32 GB RAM test listesi
 
@@ -385,6 +403,12 @@ D:\AI Local Image Studio\
     - "asyalı bir kadın" → prompt'ta "Asian woman" olmalı, başka milliyet ya da sizin yazmadığınız yer / eşya olmamalı, ~20 kelimeyi geçmemeli.
     - "bir kadın" → prompt'ta hiçbir milliyet olmamalı.
     - Log'da 🛠 / 🧹 / ✂ satırı çıktıysa YZ yanlış yazmış ve program düzeltmiş demektir; o satırları gönderin.
+
+24. **v1.4.7 — lisans onayı:** `location.json` dosyasını yedekleyip içinden `"license_ack"` bölümünü silin, programı açın.
+    - Lisans penceresi seçili dilde açılmalı; kutu işaretlenmeden "Kabul et ve devam et" çalışmamalı, "Çıkış" programı kapatmalı.
+    - Kabulden sonra bir daha sorulmamalı; başlığın yanındaki 📜 düğmesiyle açılan Lisanslar penceresinde kabul tarihi yazmalı. `models\image\sd15` gibi klasörlerde `LICENSE_….txt` görünmeli.
+25. **v1.4.7 — 956 sınırı:** 1000'den fazla görsellik bir veri setiyle Derin mod (SD 1.5, 10–15 dk).
+    - Log'daki görsel sayısı veri setindeki sayıyla aynı olmalı; büyük sette "💾 … diske yazılıyor" görünmeli. Eğitim bitince `tmp\train_cache` silinmiş olmalı.
 
 Sorun çıkarsa veri klasöründeki `logs\ails.log` (ilk kurulumda `logs\setup.log`) dosyasını gönderin.
 
