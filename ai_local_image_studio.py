@@ -35,10 +35,7 @@ import tkinter.font as tkfont                     # noqa: E402
 
 import ails_core as core                          # noqa: E402
 
-# PRO modülleri: ✏️ görsel düzenleyici, 🎬 görselden video, ✨ AI büyütme — her biri ayrı dosya. Dosya yoksa
-# (ücretsiz sürüm) program onsuz çalışır; bozuk bir modül atlanır, hatası günlüğe yazılır, program düşmez.
-# Her modül aynı arayüzü sunar: PREFIX, attach, feature_text, gallery_text, open_window, current_window,
-# manage_items, on_download, job_download, on_delete.
+
 PRO_MODULE_NAMES = ("ails_editor", "ails_video", "ails_upscale")
 PRO_MODULES = []
 PRO_ERRORS = []
@@ -104,10 +101,7 @@ UI_FONT = "Segoe UI" if IS_WIN else "DejaVu Sans"
 
 LANGS = {"English": "en", "Türkçe": "tr", "한국어": "ko", "Deutsch": "de"}
 
-# =============================================================================
-# Çoklu dil — İngilizce gömülü (yedek), diğerleri lang/*.json
-# Yeni dil eklemek için: lang/xx.json oluştur + LANGS sözlüğüne ekle.
-# =============================================================================
+
 EN = {
     # --- ilk açılış: konum seçimi ---
     "loc_title": "AI Local Image Studio — Storage Location",
@@ -605,7 +599,6 @@ EN = {
     "v2_log_no_llm": "ℹ️ No running LLM — the search text is used as typed (English words find more).",
     "v2_log_search_fail": "⚠️ Openverse search failed: {err}",
     "v2_status_search": "Searching Openverse…",
-    # --- v1.2.0: kurulum, video kareleri, öğretilen tür ---
     "rt_title": "Program environment",
     "rt_ask": "AI Local Image Studio sets up its own Python environment once.\n\nRecommended: download the program's own Python {pyv} (~{size} MB: the 'uv' tool + Python; licences MIT/Apache-2.0 and PSF). It goes into the data folder ({path}) — nothing is written to Windows, PATH or the registry — and it does not depend on the Python installed on this computer ({ver}) or its updates.\n\nYes: the program's own Python (recommended)\nNo: use this computer's Python {ver}",
     "rt_need_new": "The Python on this computer ({ver}) is too new: the image engine's packages (PyTorch etc.) are not available for it yet.\n\nThe program can download its own Python {pyv} (~{size} MB) into the data folder ({path}). Download it?",
@@ -889,9 +882,7 @@ def detect_lang():
             "Deutsch" if loc.startswith(("de", "german")) else "English")
 
 
-# =============================================================================
-# Konum işaretçisi (veri klasörü nerede?) ve ayarlar
-# =============================================================================
+
 def _pointer_path():
     if core.is_writable_dir(APP_DIR):
         return os.path.join(APP_DIR, "location.json")
@@ -932,10 +923,10 @@ DEFAULT_SETTINGS = {
     "auto_neg": True, "save_base": False,
     # LoRA / stil kartı seçimleri ve kendi kendine öğrenilen tercih LoRA'sı
     "loras": [], "pref_auto": True, "pref_weight": 0.6,
-    # Stil Öğrenme / Görsel Analiz penceresi ayarları
+    
     "v2": {},
     "editor": {},
-    # Ağ: bu bilgisayarın sunucusu ve kullanılan görsel motoru (bu bilgisayar ya da ağdaki bir sunucu)
+    
     "api": {}, "image_host": "local", "image_hosts": [],
 }
 API_DEFAULTS = {"enabled": False, "lan": False, "internet": False, "port": 7860, "key": "", "uploads": True}
