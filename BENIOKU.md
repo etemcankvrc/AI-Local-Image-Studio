@@ -1,10 +1,24 @@
-# 🎨 AI Local Image Studio v1.8.1
+# 🎨 AI Local Image Studio v1.8.7
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
 
 > 💛 **PRO sürüm (Patreon destekçilerine):** tek tıkla kurulan Windows yapısı; bu depoda olmayan ayrı gelişmiş araçları ekler — 🎬 görselden video + video LoRA eğitimi, ✏️ ayrı görüntü editörü/rötuş, 🔍 ayrı toplu büyütme aracı ve 🧰 **Dataset Studio** (karakter LoRA'sı için homojen veri seti: tutarlı detaylı etiketleme, akıllı video kare seçimi, çeşitlilik/kalite dengeli seçim). Bu depodaki açık kaynak sürüm tek başına tamamen kullanılabilir (üretim, istem yazarı, LoRA eğitimi, ağ sunucusu). 👉 **[patreon.com/GTEtemcan](https://www.patreon.com/GTEtemcan)**
+
+## 🚀 Kurulum — hangisini çalıştırmalı?
+
+**Sadece kullanmak isteyen (Windows, Python gerekmez):** **[Releases](../../releases)** sayfasından en son **FREE**
+yapısını indir:
+
+- **Setup** (`AI_Local_Image_Studio_…_Setup.exe`) → bir kez çalıştır (açar/kurar), sonra **`AI_Local_Image_Studio.exe`**'yi aç.
+- **Full** (`…_FULL.zip`) → bir yere çıkar, içindeki **`AI_Local_Image_Studio.exe`**'yi çalıştır.
+
+👉 Çalıştırılacak dosya **`AI_Local_Image_Studio.exe`**'dir. Yanındaki diğer dosyalar programın parçalarıdır, onları çalıştırma.
+
+**Kaynaktan (Python 3.10+):** `python ai_local_image_studio.py`
+
+İlk açılışta program dosyaların nereye kaydedileceğini sorar ve kendi ortamını orada kurar.
 
 ## v1.8.1'de yeni — LoRA silme düzeltmesi, eğitimde canlı önizleme, kararlı yapılar
 

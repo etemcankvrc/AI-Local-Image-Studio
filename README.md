@@ -96,11 +96,24 @@ supporters adds separate advanced tools that are not part of this repository:
   its **own Python 3.12** there (recommended, ~45 MB via `uv`), so the Python installed on your computer doesn't
   matter. Nothing is installed into your system Python, and nothing large is downloaded without your confirmation.
 
-## 🚀 Run
+## 🚀 Install & run — which file to run
+
+**Just want to use it (Windows, no Python needed):** open the **[Releases](../../releases)** page and download the
+latest **FREE** build, then:
+
+- **Setup** (`AI_Local_Image_Studio_…_Setup.exe`) → run it once to unpack/install, then launch
+  **`AI_Local_Image_Studio.exe`**.
+- **Full** (`…_FULL.zip`) → extract it anywhere, then run **`AI_Local_Image_Studio.exe`** inside the folder.
+
+👉 The file you run is **`AI_Local_Image_Studio.exe`**. The other files next to it are its parts — don't run those.
+
+**From source** (any OS, Python 3.10+):
 
 ```bash
 python ai_local_image_studio.py
 ```
+
+On first start, either way:
 
 1. Choose the data folder (the drive with the most free space is suggested).
 2. When you generate your first image, the program lists what it needs to download (image engine, model, optional
