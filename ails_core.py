@@ -3903,7 +3903,11 @@ class ImageEngine:
                           num_images_per_prompt=1, callback_on_step_end=self._make_cb(steps, step_cb, abort_event))
             if model["neg"] and negative:
                 kwargs["negative_prompt"] = negative
-            with torch.inference_mode():
+            # no_grad kullanıyoruz, inference_mode DEĞİL: inference_mode'da oluşan tensörler "inference tensor"
+            # olur ve bir daha requires_grad ayarlanamaz. LoRA'lar çalışma anında yükleniyor (load_lora_weights →
+            # PEFT adaptör enjekte ederken requires_grad'a dokunur); inference_mode üretimden sonra bir LoRA
+            # yüklemek "Setting requires_grad=True on inference tensor…" ile patlıyordu.
+            with torch.no_grad():
                 out = pipe(**kwargs)
             return out.images[0]
 
@@ -3985,7 +3989,7 @@ class ImageEngine:
             if model["neg"] and negative and "negative_prompt" in params:
                 kwargs["negative_prompt"] = negative
             try:
-                with torch.inference_mode():
+                with torch.no_grad():       # inference_mode DEĞİL — bkz. txt2img: LoRA yüklemeyle çakışıyor
                     out = pipe(**kwargs)
             finally:
                 # Ortak bileşenlerdeki offload kancalarını sıfırla: hepsi RAM'e döner, VRAM boşalır.

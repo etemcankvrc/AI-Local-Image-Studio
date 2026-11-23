@@ -706,7 +706,9 @@
   "v2_sec_preview": "🖼️ Live-Vorschau",
   "v2_prev_idle": "Das Beispielbild erscheint hier während des Trainings.",
   "v2_prev_next": "⏳ Nächstes Beispiel in ~{time}",
-  "v2_prev_last": "letztes Beispiel: Schritt {steps}",
+  "v2_prev_last": "letztes: Schritt {steps}",
   "v2_prev_off": "Beispielbilder sind aus — 'Bei jedem Speichern ein Beispielbild erzeugen' aktivieren.",
-  "v2_prev_done": "✅ Training beendet."
+  "v2_prev_done": "✅ Training beendet.",
+  "v2_prev_status": "📸 alle ~{mins} Min ein Beispiel · nächstes in ~{time}",
+  "v2_prev_set": "Set: {name}"
 }

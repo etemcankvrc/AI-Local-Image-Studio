@@ -704,7 +704,9 @@
   "v2_sec_preview": "🖼️ Live preview",
   "v2_prev_idle": "The sample image will appear here during training.",
   "v2_prev_next": "⏳ Next sample in ~{time}",
-  "v2_prev_last": "last sample: step {steps}",
+  "v2_prev_last": "last: step {steps}",
   "v2_prev_off": "Sample images are off — turn on 'Generate a sample image at every save'.",
-  "v2_prev_done": "✅ Training finished."
+  "v2_prev_done": "✅ Training finished.",
+  "v2_prev_status": "📸 a sample every ~{mins} min · next in ~{time}",
+  "v2_prev_set": "set: {name}"
 }

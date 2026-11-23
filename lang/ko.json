@@ -706,7 +706,9 @@
   "v2_sec_preview": "🖼️ 실시간 미리보기",
   "v2_prev_idle": "학습 중에 샘플 이미지가 여기에 표시됩니다.",
   "v2_prev_next": "⏳ 다음 샘플 약 {time} 후",
-  "v2_prev_last": "마지막 샘플: {steps}단계",
+  "v2_prev_last": "마지막: {steps}단계",
   "v2_prev_off": "샘플 이미지가 꺼져 있습니다 — '저장할 때마다 샘플 이미지 생성'을 켜세요.",
-  "v2_prev_done": "✅ 학습 완료."
+  "v2_prev_done": "✅ 학습 완료.",
+  "v2_prev_status": "📸 약 {mins}분마다 샘플 · 다음 ~{time}",
+  "v2_prev_set": "세트: {name}"
 }

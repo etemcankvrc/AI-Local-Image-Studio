@@ -5,6 +5,22 @@ All notable changes to AI Local Image Studio are listed here. This repository is
 supporters adds separate advanced tools — image→video + video LoRA training, a standalone editor/retouch tool, a
 batch upscaler, and **Dataset Studio** — at **[patreon.com/GTEtemcan](https://www.patreon.com/GTEtemcan)**.
 
+## 1.8.7
+
+- **Training preview fixed.** The "next sample" countdown was resetting to when each sample *appeared*, which drifted
+  from the real schedule (sample images take time to render, and step times vary), so it jumped around. It is now
+  locked to the trainer's actual schedule — every *checkpoint* minutes from the start — so it counts down smoothly.
+- The training preview now shows, at a glance: how often a sample is produced, how long until the next one, which
+  dataset/trigger is training, and the last sample's step.
+
+## 1.8.5 – 1.8.6
+
+- **Fixed "could not load LoRA" (`requires_grad=True on inference tensor`).** Generating with a freshly trained LoRA
+  (or the training preview) could fail because image generation ran under `inference_mode`, which taints tensors so a
+  LoRA can't be injected afterwards. Generation now runs under `no_grad`, so trained LoRAs load and apply correctly.
+- **Taskbar icon when run from source.** The window now sets an app identity so Windows shows the program's own icon
+  in the taskbar instead of Python's (requires `simge.ico` next to the program).
+
 ## 1.8.2 – 1.8.4
 
 - **Fixed a crash when loading a model (`OSError [Errno 22]`)** on console-less (windowed) launches: the image/text

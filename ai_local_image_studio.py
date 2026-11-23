@@ -15,7 +15,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.8.4"
+APP_VERSION = "1.8.7"
 
 
 def _app_dir():
@@ -460,8 +460,9 @@ EN = {
     "v2_sample_each": "Generate a sample image at every save",
     "v2_sec_preview": "🖼️ Live preview",
     "v2_prev_idle": "The sample image will appear here during training.",
-    "v2_prev_next": "⏳ Next sample in ~{time}",
-    "v2_prev_last": "last sample: step {steps}",
+    "v2_prev_status": "📸 a sample every ~{mins} min · next in ~{time}",
+    "v2_prev_set": "set: {name}",
+    "v2_prev_last": "last: step {steps}",
     "v2_prev_off": "Sample images are off — turn on 'Generate a sample image at every save'.",
     "v2_prev_done": "✅ Training finished.",
     "v2_analysis_hint": "The longer it runs, the better the result. Stopping saves the latest state; starting again continues from there.",
@@ -2297,7 +2298,6 @@ class StyleStudioWindow:
             self.prev_canvas.config(image=self.prev_ref, text="")
         except Exception:
             return
-        self._tr_last_sample_at = time.time()
         if steps is not None:
             self._tr_last_sample_steps = steps
 
@@ -2793,10 +2793,10 @@ class StyleStudioWindow:
 
         # canlı önizleme durumu (bir sonraki örnek görselin ne zaman geleceğini göstermek için)
         self._tr_start = time.time()
-        self._tr_last_sample_at = None
         self._tr_last_sample_steps = None
         self._tr_ckpt_min = float(kw.get("checkpoint_min") or 0)
         self._tr_sample_on = bool(kw.get("sample_each", True))
+        self._tr_tag = (kw.get("tag") or "").strip()      # hangi veri seti / tetik eğitiliyor
 
         def reset_preview():
             if self.alive():
@@ -2826,14 +2826,20 @@ class StyleStudioWindow:
             if not app.abort.is_set():
                 el = live["elapsed"] + (time.time() - live["at"])
                 show(live["frac"], live["steps"], el)
-                # bir sonraki örnek görsel yaklaşık ne zaman gelecek (her kayıtta üretiliyorsa)
+                # örnek görseller eğitmende başlangıçtan itibaren her checkpoint_min dk'da bir üretilir.
+                # Geri sayımı bu takvime sabitliyoruz (örnek GÖSTERİM anına göre değil) — yoksa örnek üretim
+                # süresi + değişken adım süreleri yüzünden sayaç kayıp "kafasına göre" atıyordu.
                 if self.alive() and self._tr_sample_on and self._tr_ckpt_min > 0:
-                    base_at = self._tr_last_sample_at or self._tr_start
-                    remain = max(0.0, self._tr_ckpt_min * 60.0 - (time.time() - base_at))
-                    s = t("v2_prev_next", time=fmt_duration(remain))
+                    ck = self._tr_ckpt_min * 60.0
+                    remain = ck - ((time.time() - self._tr_start) % ck)
+                    s = t("v2_prev_status", mins=int(self._tr_ckpt_min), time=fmt_duration(remain))
+                    if self._tr_tag:
+                        s += "  ·  " + t("v2_prev_set", name=self._tr_tag)
                     if self._tr_last_sample_steps is not None:
                         s += "  ·  " + t("v2_prev_last", steps=self._tr_last_sample_steps)
                     self.prev_status.config(text=s)
+                elif self.alive() and not self._tr_sample_on:
+                    self.prev_status.config(text=t("v2_prev_off"))
             app.r.after(1000, tick)
         app.post(lambda: app.r.after(1000, tick))
 
@@ -7171,8 +7177,21 @@ def gui_main():
     return 0
 
 
+def _set_app_user_model_id():
+    """Windows'ta taskbar ikonu: kaynaktan (pythonw) çalışırken pencere pythonw.exe altında gruplanır ve
+    taskbar onun ikonunu gösterir. Ayrı bir AppUserModelID verince Windows programı kendi uygulaması sayar
+    ve pencerenin kendi ikonunu (iconbitmap → simge.ico) taskbar'da da gösterir. exe'de gerekmez ama zararsız."""
+    if IS_WIN:
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("GTEtemcan.AILocalImageStudio")
+        except Exception:
+            pass
+
+
 def main():
     ensure_std_streams()
+    _set_app_user_model_id()
     if "--ails-child" in sys.argv:
         sys.exit(gui_main() or 0)
     cfg = load_pointer()

@@ -706,7 +706,9 @@
   "v2_sec_preview": "🖼️ Canlı önizleme",
   "v2_prev_idle": "Örnek görsel eğitim sırasında burada görünecek.",
   "v2_prev_next": "⏳ Sonraki örnek ~{time} sonra",
-  "v2_prev_last": "son örnek: adım {steps}",
+  "v2_prev_last": "son: adım {steps}",
   "v2_prev_off": "Örnek görsel kapalı — 'Her kayıtta örnek görsel üret' seçeneğini açın.",
-  "v2_prev_done": "✅ Eğitim bitti."
+  "v2_prev_done": "✅ Eğitim bitti.",
+  "v2_prev_status": "📸 ~{mins} dk'da bir örnek · sonraki ~{time}",
+  "v2_prev_set": "set: {name}"
 }
