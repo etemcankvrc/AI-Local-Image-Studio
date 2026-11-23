@@ -6,6 +6,22 @@ your own language into English prompts. The interface is available in **English,
 
 > 🇹🇷 Ayrıntılı Türkçe kılavuz ve sürüm notları: **[BENIOKU.md](BENIOKU.md)**
 
+**Current version: 1.8.1**
+
+### 💛 PRO build on Patreon
+
+This repository is free and fully usable on its own: **image generation, the prompt writer, LoRA training (all teach
+modes), the network server and the LoRA tools are all here and open source.** A one-click Windows **PRO** build for
+supporters adds separate advanced tools that are not part of this repository:
+
+- 🎬 **Image → video** and **video LoRA training**
+- ✏️ a standalone **image editor / retouch** tool
+- 🔍 a standalone **batch upscaling** tool
+- 🧰 **Dataset Studio** — a separate app that builds *homogeneous* character-LoRA datasets (detailed, consistent
+  captioning, smart video frame extraction, diversity/quality-balanced selection)
+
+👉 **[patreon.com/GTEtemcan](https://www.patreon.com/GTEtemcan)**
+
 ## ✨ Features
 
 - **Image generation:** SD 1.5, SDXL 1.0, Z-Image-Turbo, FLUX.2 [klein] 4B — quality presets, samplers, hires fix,
@@ -59,6 +75,18 @@ your own language into English prompts. The interface is available in **English,
     Images are also saved on the server in `outputs\network\`.
   - Windows asks once for firewall permission: allow **private networks** only. Never forward the port to the
     internet.
+
+## 🆕 What's new in 1.8.1
+
+- **LoRA delete fixed:** you can now delete LoRAs you added yourself too (not only the ones the program trained). The
+  file is released before deleting and the move is retried, so a LoRA that is still loaded no longer blocks deletion.
+  Deleted LoRAs still go to `loras\.trash`, never overwritten.
+- **Training window — live preview:** the latest sample image now shows right in the training panel, with a
+  **"next sample in ~X"** countdown so you can see when the next preview is coming.
+- **Character-LoRA training:** when a caption already starts with the trigger word, the trigger is no longer added a
+  second time (no more `trigger, trigger woman …` duplication).
+- **More stable builds:** windows (training, network, etc.) open reliably; an unexpected error now shows a message
+  instead of closing the program, and is written to `logs\gui_errors.log`.
 
 ## 📦 Requirements
 

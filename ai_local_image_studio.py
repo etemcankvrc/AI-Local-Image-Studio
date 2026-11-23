@@ -25,7 +25,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.4.8"
+APP_VERSION = "1.8.1"
 
 
 def _app_dir():
@@ -44,6 +44,64 @@ from tkinter import ttk, filedialog, messagebox, simpledialog  # noqa: E402
 import tkinter.font as tkfont                     # noqa: E402
 
 import ails_core as core                          # noqa: E402
+
+# PRO modülleri: ✏️ görsel düzenleyici, 🎬 görselden video, ✨ AI büyütme — her biri ayrı dosya. Dosya yoksa
+# (ücretsiz sürüm) program onsuz çalışır; bozuk bir modül atlanır, hatası günlüğe yazılır, program düşmez.
+# Her modül aynı arayüzü sunar: PREFIX, attach, feature_text, gallery_text, open_window, current_window,
+# manage_items, on_download, job_download, on_delete.
+PRO_MODULE_NAMES = ("ails_editor", "ails_video", "ails_upscale")
+PRO_MODULES = []
+PRO_ERRORS = []
+for _pro_name in PRO_MODULE_NAMES:
+    try:
+        PRO_MODULES.append(importlib.import_module(_pro_name))
+    except ImportError as _pro_e:
+        if getattr(_pro_e, "name", None) != _pro_name:   # dosya var ama içinden bir şey eksik → hata
+            PRO_ERRORS.append((_pro_name, traceback.format_exc()))
+    except Exception:                                    # bozuk eklenti programı düşürmesin
+        PRO_ERRORS.append((_pro_name, traceback.format_exc()))
+EDITOR = next((m for m in PRO_MODULES if m.__name__ == "ails_editor"), None)
+APP_EDITION = " PRO" if PRO_MODULES else ""
+
+
+def pro_module_for(item):
+    """6. bölümdeki bir satırın ('edit:…', 'vid:…', 'aiup:…') sahibi PRO modülü (yoksa None)."""
+    for m in PRO_MODULES:
+        if item.startswith(m.PREFIX + ":"):
+            return m
+    return None
+
+
+def ensure_std_streams():
+    """Konsolsuz (windowed) exe'de sys.stdout/sys.stderr None'dur. Bunlara yazan herhangi bir kod (ör. bir
+    traceback yazdırma) programı sessizce çökertebilir. None olanları devnull'a yönlendirip çökmeyi önler."""
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            try:
+                setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+            except Exception:
+                pass
+
+
+class _ProNS:
+    """PRO modüllerine (ails_video / ails_editor / ails_upscale) paylaşılan global'leri (tk, BG, t, JobFail…)
+    sunan canlı namespace. Paketlenmiş (armored) build'de giriş modülü ayrı bir globals sözlüğünde '__main__'
+    olarak çalışır; orada `sys.modules[__module__]` giriş global'lerini DEĞİL bootstrap'ı verir ve pencere
+    açılınca NameError'la çökerdi. Bu sarmalayıcı doğrudan giriş modülünün canlı globals()'ını okur: hem
+    normal hem paketlenmiş build'de çalışır."""
+    __slots__ = ("_g",)
+
+    def __init__(self, g):
+        object.__setattr__(self, "_g", g)
+
+    def __getattr__(self, k):
+        try:
+            return self._g[k]
+        except KeyError:
+            raise AttributeError(k)
+
+    def __setattr__(self, k, v):
+        self._g[k] = v
 
 IS_WIN = core.IS_WIN
 LANG_DIR = os.path.join(APP_DIR, "lang")
@@ -308,7 +366,7 @@ EN = {
     "no_image": "Select an image in the gallery first.",
     "licenses_title": "📜 Licenses & Third-Party Notices",
     "lic_intro": "AI Local Image Studio uses only components whose licenses allow commercial use. Models are downloaded by the user from their official sources; this program does not redistribute model weights.",
-    "lic_rail": "CreativeML OpenRAIL-M / OpenRAIL++-M (SD 1.5, SDXL and models derived from them): commercial use is allowed, but the license's use-based restrictions (Attachment A) apply to every user and must be respected. Full texts: LICENSES folder of the program.",
+    "lic_rail": "CreativeML OpenRAIL-M / OpenRAIL++-M (SD 1.5, SDXL and models derived from them, e.g. InstructPix2Pix): commercial use is allowed, but the license's use-based restrictions (Attachment A) apply to every user and must be respected. Full texts: LICENSES folder of the program.",
     "lic_addons": "Add-ons (LoRA) that you place into the add-ons folder yourself are under your own license responsibility (v2).",
     "prompt_copied": "Prompt copied to clipboard.",
     # --- v1.0.2: kalite, yüz/el düzeltici, v2 hazırlık penceresi ---
@@ -414,6 +472,12 @@ EN = {
     "v2_min_unit": "min",
     "v2_checkpoint": "Save progress every:",
     "v2_sample_each": "Generate a sample image at every save",
+    "v2_sec_preview": "🖼️ Live preview",
+    "v2_prev_idle": "The sample image will appear here during training.",
+    "v2_prev_next": "⏳ Next sample in ~{time}",
+    "v2_prev_last": "last sample: step {steps}",
+    "v2_prev_off": "Sample images are off — turn on 'Generate a sample image at every save'.",
+    "v2_prev_done": "✅ Training finished.",
     "v2_analysis_hint": "The longer it runs, the better the result. Stopping saves the latest state; starting again continues from there.",
     "v2_sec_addons": "📦 Add-ons (LoRA) folder",
     "v2_addons": "{path}\n{n} add-on file(s) (.safetensors) found.",
@@ -620,8 +684,8 @@ EN = {
     "v2_log_caption_auto": "📝 New images are being described automatically…",
     "v2_log_caption_later": "ℹ️ The descriptions will be written when you press ▶ START (or 🔍 Read now) — the image engine is installed then.",
     "v2_hide_faces": "🙈 Hide faces (Place, Anatomy)",
-    "v2_hint_applied": "⏱ “{name}” comes with a training suggestion: {model}, ~{m} min, checkpoint every {ck} min — "
-                       "filled in (you can change it).",
+    "v2_hint_applied": "⏱ “{name}” was prepared with AI Local Dataset Studio: {model}, ~{m} min, checkpoint every "
+                       "{ck} min — filled in (you can change it).",
     "tr_log_faces_anatomy": "🙈 Hiding faces: {faces} face(s) in {images} image(s) are blurred and not learned; "
                             "the bodies are learned fully (the LoRA does not learn a specific face).",
     "tr_log_faces": "🙈 Hiding faces: {faces} face(s) found in {images} image(s). Faces are blurred and not learned, people are learned less — the surroundings come first.",
@@ -705,7 +769,8 @@ EN = {
     "img_host_local": "This computer",
     "img_host_add": "➕ Add a server on the network…",
     "img_host_add_title": "Image server on the network",
-    "img_host_add_text": "Enter the address of another computer running AI Local Image Studio with its network server turned on (shown in its '🌐 Network server' window), e.g. 192.168.1.20:7860, and its access key.",
+    "img_host_add_text": "Enter the address of another computer running AI Local Image Studio with its server turned on (shown in its '🌐 Network server' window), plus its access key. On the same network use the local address, e.g. 192.168.1.20:7860; over the internet use the public address or domain, e.g. myserver.duckdns.org:7860.",
+    "bad_server_host": "Please enter a valid address: a local IP (192.168.x.x), a public IP, or a domain name, optionally with :port (e.g. 192.168.1.20:7860 or myserver.duckdns.org:7860).",
     "img_host_addr": "Address:",
     "img_host_key": "Access key:",
     "img_host_connecting": "🌐 connecting…",
@@ -729,6 +794,9 @@ EN = {
     "api_log_stopped": "🌐 Network server is off.",
     "api_log_request": "🌐 Request from {ip} ({kind}): {n} image(s), {model}",
     "api_log_lora_in": "📥 LoRA received over the network: {name} (addons\\network)",
+    "api_log_llm_in": "🤖 Prompt request from {host} — writing with the local LLM",
+    "api_log_caption_in": "🔍 Image description request from {host}",
+    "api_log_upscale_in": "⬆️ Upscale request from {host}",
     "net_lbl_serving": "🌐 serving: {url}",
     "net_lbl_remote": "🌐 using {host}",
     "net_title": "Network server",
@@ -736,6 +804,11 @@ EN = {
     "net_enable": "Turn on the network server",
     "net_only_me": "Only this computer (127.0.0.1) — for apps on this PC",
     "net_lan": "My home / office network — other devices can connect (access key required)",
+    "net_internet": "Over the internet — reachable from anywhere with the address + key (access key required)",
+    "net_internet_note": "⚠️ Internet mode: the server accepts connections from any address, protected only by the access key. Keep the key secret, use a strong one, and expose the port only through your router/port-forward or a tunnel. Everything (LLM, generation, upscale, simple video) runs here on this computer.",
+    "net_need_key": "Internet mode requires an access key. Generate one first.",
+    "net_start_fail": "The server could not be started. Check that the port is free and try again.",
+    "api_log_internet": "🌐 Internet mode is ON: any address can connect with the access key. Make sure the port is forwarded/tunnelled and the key is strong and private.",
     "net_port": "Port:",
     "net_key": "Access key:",
     "net_key_new": "New key",
@@ -874,10 +947,11 @@ DEFAULT_SETTINGS = {
     "loras": [], "pref_auto": True, "pref_weight": 0.6,
     # Stil Öğrenme / Görsel Analiz penceresi ayarları
     "v2": {},
+    "editor": {},
     # Ağ: bu bilgisayarın sunucusu ve kullanılan görsel motoru (bu bilgisayar ya da ağdaki bir sunucu)
     "api": {}, "image_host": "local", "image_hosts": [],
 }
-API_DEFAULTS = {"enabled": False, "lan": False, "port": 7860, "key": "", "uploads": True}
+API_DEFAULTS = {"enabled": False, "lan": False, "internet": False, "port": 7860, "key": "", "uploads": True}
 V2_DEFAULTS = {
     "offline": True, "web_import": False, "web_ack": False, "dataset": "", "recursive": True, "copy": True,
     "min_side": 256, "mode": "light", "base_model": "sd15", "duration": "until_stop", "minutes": 60,
@@ -971,12 +1045,13 @@ def load_settings(paths):
     except (TypeError, ValueError):
         api["port"] = 7860
     api["enabled"], api["lan"], api["uploads"] = bool(api["enabled"]), bool(api["lan"]), bool(api["uploads"])
+    api["internet"] = bool(api.get("internet"))
     api["key"] = str(api.get("key") or "")
     s["api"] = api
     hosts = []
     for h in s.get("image_hosts") or []:
-        if isinstance(h, dict) and core.normalize_image_host(str(h.get("host", ""))):
-            hosts.append({"host": core.normalize_image_host(h["host"]), "key": str(h.get("key") or "")})
+        if isinstance(h, dict) and core.normalize_server_host(str(h.get("host", ""))):
+            hosts.append({"host": core.normalize_server_host(h["host"]), "key": str(h.get("key") or "")})
     s["image_hosts"] = hosts[:12]
     if s.get("image_host") not in [h["host"] for h in hosts]:
         s["image_host"] = "local"
@@ -1164,7 +1239,7 @@ def open_folder(path):
 
 
 def license_groups():
-    """(OpenRAIL türevi model adları, {serbest lisans: [adlar]}) — programın kendi listelerinden."""
+    """(OpenRAIL türevi model adları, {serbest lisans: [adlar]}) — programın kendi listelerinden + PRO modülleri."""
     rail, free = [], {}
 
     def add(name, lic):
@@ -1187,6 +1262,9 @@ def license_groups():
     for f in core.DETECTOR_FILES:
         add({"face": "YuNet", "hand": "MediaPipe palm", "anime": "lbpcascade_animeface"}.get(f["key"], f["file"]),
             f["license"])
+    for pm in PRO_MODULES:
+        for name, lic in getattr(pm, "LICENSES", ()):
+            add(name, lic)
     return rail, free
 
 
@@ -1273,7 +1351,7 @@ def ensure_license_ack(cfg):
     if not license_dialog(cfg):
         return False
     cfg["license_ack"] = {"v": LICENSE_ACK_VERSION, "date": time.strftime("%Y-%m-%d %H:%M"),
-                          "app": APP_VERSION}
+                          "app": APP_VERSION + APP_EDITION}
     save_pointer(cfg)
     return True
 
@@ -1754,6 +1832,7 @@ class StyleStudioWindow:
         w.configure(bg=BG)
         w.transient(app.r)
         self.combos = []
+        self.prev_ref = None            # canlı önizleme görseli (GC'yi engellemek için referans)
         v = self.v2
         self.v_ds = tk.StringVar(value=v.get("dataset", ""))
         self.v_tag = tk.StringVar(value="")
@@ -1999,6 +2078,15 @@ class StyleStudioWindow:
         n.config(text=t("v2_analysis_hint"))
         n.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
+        # canlı önizleme (sağ sütun): eğitim sırasında üretilen örnek görsel + bir sonraki örneğin ne zaman geleceği
+        b = self._lf(right, "v2_sec_preview", 2)
+        self.prev_canvas = tk.Label(b, bg="#111111", width=44, height=16, anchor="center", justify="center",
+                                    fg="#777777", font=f.n9, text=t("v2_prev_idle"), wraplength=300)
+        self.prev_canvas.pack(fill="both", expand=True, pady=(0, 4))
+        self.prev_status = tk.Label(b, bg=BG, fg=BLUE, font=f.b9, anchor="w", justify="left", wraplength=360)
+        self.prev_status.config(text="—")
+        self.prev_status.pack(fill="x")
+
         # eklentiler (LoRA) — sol sütunun altında
         b = self._lf(left, "v2_sec_addons", 2)
         r = tk.Frame(b, bg=BG)
@@ -2073,7 +2161,7 @@ class StyleStudioWindow:
         self.update_state()
 
     def _apply_train_hint(self, slug, data):
-        """Eğitim önerisiyle gelen veri seti (train_hint): önerilen model, süre ve ara kayıt aralığı bir kez
+        """AI Local Dataset Studio'da hazırlanan veri seti: önerilen model, süre ve ara kayıt aralığı bir kez
         (veri seti seçilince) doldurulur; sonra kullanıcı istediği gibi değiştirir."""
         hint = data.get("train_hint") if isinstance(data.get("train_hint"), dict) else None
         if not hint or getattr(self, "_hint_slug", None) == slug:
@@ -2206,6 +2294,26 @@ class StyleStudioWindow:
             return
         self.pg["value"] = (done * 100.0 / total) if total else 0
         self.lbl_prog.config(text=text)
+
+    def set_preview(self, path, steps=None):
+        """Eğitim sırasında üretilen örnek görseli sağ sütundaki önizleme kutusunda gösterir."""
+        if not self.alive():
+            return
+        try:
+            from PIL import Image, ImageTk
+            with Image.open(path) as im:
+                im.thumbnail((300, 300))
+                self.prev_ref = ImageTk.PhotoImage(im.copy())
+            self.prev_canvas.config(image=self.prev_ref, text="")
+        except Exception:
+            return
+        self._tr_last_sample_at = time.time()
+        if steps is not None:
+            self._tr_last_sample_steps = steps
+
+    def prev_status_set(self, text):
+        if self.alive():
+            self.prev_status.config(text=text)
 
     def collect(self):
         def num(var, default, lo, hi):
@@ -2693,6 +2801,20 @@ class StyleStudioWindow:
         app = self.app
         app.status("v2_status_train")
 
+        # canlı önizleme durumu (bir sonraki örnek görselin ne zaman geleceğini göstermek için)
+        self._tr_start = time.time()
+        self._tr_last_sample_at = None
+        self._tr_last_sample_steps = None
+        self._tr_ckpt_min = float(kw.get("checkpoint_min") or 0)
+        self._tr_sample_on = bool(kw.get("sample_each", True))
+
+        def reset_preview():
+            if self.alive():
+                self.prev_ref = None
+                self.prev_canvas.config(image="", text=t("v2_prev_idle"))
+                self.prev_status.config(text=t("v2_prev_off") if not self._tr_sample_on else "—")
+        app.post(reset_preview)
+
         live = {"steps": 0, "elapsed": 0.0, "at": time.time(), "frac": None, "on": True}
 
         def show(frac, steps, elapsed):
@@ -2714,6 +2836,14 @@ class StyleStudioWindow:
             if not app.abort.is_set():
                 el = live["elapsed"] + (time.time() - live["at"])
                 show(live["frac"], live["steps"], el)
+                # bir sonraki örnek görsel yaklaşık ne zaman gelecek (her kayıtta üretiliyorsa)
+                if self.alive() and self._tr_sample_on and self._tr_ckpt_min > 0:
+                    base_at = self._tr_last_sample_at or self._tr_start
+                    remain = max(0.0, self._tr_ckpt_min * 60.0 - (time.time() - base_at))
+                    s = t("v2_prev_next", time=fmt_duration(remain))
+                    if self._tr_last_sample_steps is not None:
+                        s += "  ·  " + t("v2_prev_last", steps=self._tr_last_sample_steps)
+                    self.prev_status.config(text=s)
             app.r.after(1000, tick)
         app.post(lambda: app.r.after(1000, tick))
 
@@ -2721,6 +2851,7 @@ class StyleStudioWindow:
             meta = {"model": "LoRA: %s" % info.get("name", ""), "stage": "sample", "steps": info.get("steps"),
                     "width": info.get("res"), "height": info.get("res"), "prompt": info.get("trigger", "")}
             app.post(app.add_to_gallery, path, meta, True)
+            app.post(self.set_preview, path, info.get("steps"))     # eğitim panelindeki canlı önizleme
             app.log(t("tr_log_sample", path=path))
 
         info = None
@@ -2731,6 +2862,7 @@ class StyleStudioWindow:
             info = self._train_loop(fn, kw, tries, wd, prog, on_sample)
         finally:
             live["on"] = False
+            app.post(lambda: self.prev_status.config(text=t("v2_prev_done")) if self.alive() else None)
         self._train_done(info, wd)
 
     def _train_loop(self, fn, kw, tries, wd, prog, on_sample):
@@ -3446,19 +3578,25 @@ class LoraPickerWindow:
 
     def on_delete(self):
         it = self._item(self.tree.focus())
-        if not it or it["origin"] != "own" or self.app.running():
+        if not it or it["origin"] not in ("own", "external") or self.app.running():
             return
         kind = t("lp_kind_card") if it["kind"] == "card" else t("lp_kind_lora")
         if not messagebox.askyesno(APP_NAME, t("lp_delete_q", name=it["name"], kind=kind,
                                                file=os.path.basename(it["path"])), parent=self.w):
             return
+        # Dosya motor tarafından açık olabilir (Windows: mmap kilidi): silmeden önce motoru boşalt.
         try:
-            if it["kind"] == "lora" and self.app.engine._loras:
+            if it["kind"] == "lora" and getattr(self.app.engine, "pipe", None) is not None:
                 self.app.engine.unload()
+        except Exception:
+            pass
+        try:
             d, _moved = core.trash_own_item(self.paths, it)
             self.app.log(t("log_trashed", name=it["name"], kind=kind, path=d))
         except Exception as e:
             self.app.log(friendly_error(e))
+            messagebox.showerror(APP_NAME, friendly_error(e), parent=self.w)
+            return
         self.sel = [s for s in self.sel if s["id"] != it["id"]]
         self.reload()
 
@@ -3668,8 +3806,163 @@ class ApiBackend:
         p["lora_specs"], p["lora_skipped"] = specs, skipped
         return p
 
+    # ---- genel iş hazırlama (üretim dışı: büyütme / video / açıklama / LLM)
+    def prepare_op(self, body, source=""):
+        kind = str(body.get("_kind") or "").strip()
+        if kind not in ("llm", "caption", "upscale"):
+            raise core.ApiError(400, "this server does not support the job kind: " + (kind or "?"))
+        app = self.app
+        p = {"_kind": kind, "_source": source}
+        if kind == "llm":
+            want = body.get("model") or self.current_model()
+            m = self._resolve_model(want)
+            if m is None:
+                raise core.ApiError(400, f"model not known on this server: {want}")
+            llm = str(body.get("llm") or "").strip()
+            if not llm:
+                raise core.ApiError(400, "no LLM model given")
+            p.update(model=m["key"], llm=llm, text=str(body.get("text") or ""),
+                     extra=str(body.get("extra") or ""),
+                     auto_fields=[x for x in (body.get("auto_fields") or []) if x in
+                                  ("aspect", "orientation", "creativity")])
+            if not p["text"].strip():
+                raise core.ApiError(400, "prompt text is empty")
+            return p
+        if kind == "upscale":
+            # Upscale yalnızca Real-ESRGAN modelini ister (difüzyon motoru gerekmez).
+            if not core.is_upscaler_installed(app.paths.models):
+                raise core.ApiError(503, "the upscaler model is not installed on the server")
+            p["_input_path"] = self._save_input(body)
+            p["meta"] = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+            return p
+        # caption: tek giriş görseli ister
+        if not core.engine_status(app.paths):
+            raise core.ApiError(503, "the image engine is not installed on the server")
+        p["_input_path"] = self._save_input(body)
+        return p
+
+    def _save_input(self, body):
+        import base64
+        b64 = body.get("_input_png")
+        if not b64:
+            raise core.ApiError(400, "no input image sent")
+        try:
+            raw = base64.b64decode(b64)
+        except Exception:
+            raise core.ApiError(400, "invalid input image")
+        os.makedirs(self.app.paths.tmp, exist_ok=True)
+        path = os.path.join(self.app.paths.tmp, "apiin_%d_%d.png" % (os.getpid(), int(time.time() * 1000) % 100000))
+        with open(path, "wb") as f:
+            f.write(raw)
+        return path
+
     # ---- çalıştırma (sunucunun iş thread'inde)
     def run(self, job):
+        if job.kind == "llm":
+            return self._run_llm(job)
+        if job.kind == "caption":
+            return self._run_caption(job)
+        if job.kind == "upscale":
+            return self._run_upscale(job)
+        return self._run_generate(job)
+
+    def _wait_idle(self, job):
+        """Sunucunun kendi arayüzünde bir iş çalışıyorsa (ekran kartı meşgul) bitmesini bekler."""
+        while self.app.running():
+            if job.abort.is_set():
+                raise core.AbortedError("user")
+            job.text = "busy"
+            time.sleep(1.0)
+        job.text = ""
+
+    def _run_llm(self, job):
+        app = self.app
+        p = job.params
+        m = core.IMAGE_MODEL_BY_KEY.get(p["model"])
+        if m is None:
+            raise core.ApiError(400, "unknown model")
+        self._wait_idle(job)
+        job.log(t("api_log_llm_in", host=job.source))
+        c = app.ensure_llm_for_server(p["llm"], job)       # sunucunun kendi yerel Ollama'sı (indirmez)
+        if c is None:
+            raise core.ApiError(503, "the LLM model is not installed on the server: " + p["llm"])
+        res, notes, cleaned = core.llm_make_prompt(c, p["llm"], m, p["text"], p["extra"], set(p["auto_fields"]),
+                                                   park_cb=lambda: app.post(app.engine.park))
+        if cleaned:
+            job.log(t("log_llm_cleaned", n=cleaned[0], m=cleaned[1]))
+        for kind, info in notes:
+            job.log(t("log_llm_" + kind, **info))
+        job.result = res
+        job.progress = 100.0
+
+    def _run_caption(self, job):
+        app = self.app
+        self._wait_idle(job)
+        job.log(t("api_log_caption_in", host=job.source))
+        cap = app.server_captioner()
+        if cap is None:
+            raise core.ApiError(503, "the image description model is not installed on the server")
+        from PIL import Image
+        with Image.open(job.params["_input_path"]) as im:
+            im = im.convert("RGB")
+            text = cap.caption(im)
+        try:
+            os.remove(job.params["_input_path"])
+        except OSError:
+            pass
+        job.result = {"caption": text or ""}
+        job.progress = 100.0
+
+    def _run_upscale(self, job):
+        app = self.app
+        from PIL import Image
+        from PIL.PngImagePlugin import PngInfo
+        self._wait_idle(job)
+        job.log(t("api_log_upscale_in", host=job.source))
+        hw = app.hw
+        device = hw.device if (hw.cuda_usable and hw.vram_gb >= 1.5) else "cpu"
+        tile = 256 if hw.vram_gb >= 3 else 160
+        with Image.open(job.params["_input_path"]) as im:
+            im = im.convert("RGB")
+            im.load()
+
+        def cb(a, b):
+            if job.abort.is_set():
+                return
+            job.progress = min(99.0, a * 100.0 / max(1, b))
+            job.text = f"{a}/{b}"
+        try:
+            core.free_gpu_memory()
+            try:
+                net = core.load_upscaler(core.upscaler_path(app.paths.models), device)
+                out = core.upscale_2x(im, net, device, tile=tile, progress_cb=cb, abort_event=job.abort)
+            except Exception as e:
+                if device == "cpu" or not core.is_oom_error(e):
+                    raise
+                core.unload_upscaler()
+                job.log(t("log_oom", profile=t("prof_cpu")))
+                device = "cpu"
+                net = core.load_upscaler(core.upscaler_path(app.paths.models), "cpu")
+                out = core.upscale_2x(im, net, "cpu", tile=tile, progress_cb=cb, abort_event=job.abort)
+        finally:
+            core.unload_upscaler()
+            core.free_gpu_memory()
+            try:
+                os.remove(job.params["_input_path"])
+            except OSError:
+                pass
+        meta = dict(job.params.get("meta") or {})
+        meta.update(width=out.width, height=out.height, upscaled="Real-ESRGAN x2plus")
+        info = PngInfo()
+        info.add_text("ails", json.dumps(meta, ensure_ascii=False))
+        import io
+        buf = io.BytesIO()
+        out.save(buf, format="PNG", pnginfo=info)
+        job.images.append((buf.getvalue(), meta))
+        job.text = ""
+        job.progress = 100.0
+
+    def _run_generate(self, job):
         app = self.app
         p = dict(job.params)
         p["_collect"] = []
@@ -3723,7 +4016,7 @@ class ImageStudio:
         self.f = Fonts(root)
         self.f.apply_lang(T.code)
         set_dark(root, self.f)
-        self.r.title(f"{APP_NAME} v{APP_VERSION}")
+        self.r.title(f"{APP_NAME} v{APP_VERSION}{APP_EDITION}")
         sh = self.r.winfo_screenheight()
         self.r.geometry(f"1480x{max(820, min(1000, sh - 80))}")
         self.r.minsize(1200, 820)
@@ -3745,9 +4038,17 @@ class ImageStudio:
         self.preview_ref = None
         self.adv_win = None
         self.style_win = None
+        self.edit_win = None
+        self.video_win = None
+        self.aiup_win = None
+        # PRO modüllerine giriş modülünün CANLI global'lerini ver (globals()); paketlenmiş build'de
+        # sys.modules[__module__] yanlış namespace'i döndürüp pencere açılınca çökmeye yol açıyordu.
+        _pro_ns = _ProNS(globals())
+        for _m in PRO_MODULES:
+            _m.attach(_pro_ns)
         # lisans metinleri, daha önce indirilmiş modellerin klasörlerine de konur (yalnızca eksikse; hızlı)
-        threading.Thread(target=core.ensure_license_copies, args=(paths.models, list(core.IMAGE_MODELS)),
-                         daemon=True).start()
+        _lic_models = list(core.IMAGE_MODELS) + [m for pm in PRO_MODULES for m in getattr(pm, "LICENSE_MODELS", ())]
+        threading.Thread(target=core.ensure_license_copies, args=(paths.models, _lic_models), daemon=True).start()
         self.lora_win = None
         self.after_job = None          # iş başarıyla bitince arayüzde çalışacak devam adımı
         self.ratings = core.load_feedback(paths)
@@ -3758,6 +4059,7 @@ class ImageStudio:
         self._prev_image_host = self.st["image_host"]
         self.remote = None             # bağlı ağ sunucusu: {"host", "key", "info", "models", "loras"}
         self.api_server = None         # bu bilgisayarın ağ sunucusu (açıksa)
+        self._srv_captioner = None     # sunucu modunda yüklenen açıklama modeli
         self._api_job = None           # şu an çalışan ağ isteği
 
         self._init_vars()
@@ -3766,7 +4068,9 @@ class ImageStudio:
         self.r.protocol("WM_DELETE_WINDOW", self.on_close)
         self.r.after(60, self._poll)
         self._load_existing_gallery()
-        self.log(t("log_start", app=APP_NAME, ver=APP_VERSION))
+        self.log(t("log_start", app=APP_NAME, ver=APP_VERSION + APP_EDITION))
+        for _name, _err in PRO_ERRORS:
+            self._write_file_log(f"{_name} could not be loaded:\n" + _err)
         self.log(t("log_data", path=paths.root))
         self.log(t("log_hw", txt=self._hw_text()))
         if IS_WIN and 0 <= self.hw.pagefile_gb < 4:
@@ -3875,7 +4179,8 @@ class ImageStudio:
         # --- başlık ---
         hdr = tk.Frame(left, bg=BG)
         hdr.grid(row=0, column=0, pady=6)
-        self.hdr_lbl = tk.Label(hdr, text=f" 🎨 {APP_NAME.upper()} v{APP_VERSION}", font=self.f.b18, bg=BG, fg=BLUE)
+        self.hdr_lbl = tk.Label(hdr, text=f" 🎨 {APP_NAME.upper()} v{APP_VERSION}{APP_EDITION}", font=self.f.b18, bg=BG,
+                                fg=BLUE)
         self.hdr_lbl.pack(side="left")
         tk.Button(hdr, text="📜", bg=BG, fg="#aaaaaa", bd=0, font=self.f.n10, cursor="hand2",
                   activebackground=BG, command=self.show_licenses).pack(side="left", padx=(10, 0))
@@ -3903,6 +4208,17 @@ class ImageStudio:
         self.btn_style = tk.Button(feat, bg=ORANGE, fg="white", font=self.f.b11, relief="flat", cursor="hand2",
                                    activebackground="#ff5722", command=self.open_style_window)
         self.btn_style.grid(row=0, column=0, sticky="ew", ipady=5)
+        # PRO pencereleri: iki sütunlu ızgara (stil öğrenme + düzenleyici üstte, video + AI büyütme altta)
+        self.pro_btns = []
+        for i, m in enumerate(PRO_MODULES):
+            n = i + 1
+            row, col = divmod(n, 2)
+            feat.grid_columnconfigure(col, weight=1)
+            b = tk.Button(feat, bg=ORANGE, fg="white", font=self.f.b11, relief="flat", cursor="hand2",
+                          activebackground="#ff5722", command=lambda m=m: m.open_window(self))
+            b.grid(row=row, column=col, sticky="ew", ipady=5, padx=(6 if col else 0, 0), pady=(6 if row else 0, 0))
+            self.pro_btns.append((m, b))
+        self.btn_edit = next((b for m, b in self.pro_btns if m is EDITOR), None)
 
         # --- 1. prompt ---
         self.l1 = self._labelframe(left, 3, sticky="nsew", weight=2)
@@ -4098,6 +4414,12 @@ class ImageStudio:
         self.b_copy = ttk.Button(acts, command=self.on_copy_prompt)
         self.b_reuse = ttk.Button(acts, command=self.on_reuse)
         self._act_btns = (self.b_show, self.b_up, self.b_copy, self.b_reuse)
+        self.pro_gal_btns = []
+        for m in PRO_MODULES:
+            b = ttk.Button(acts, command=lambda m=m: self.on_pro_selected(m))
+            self.pro_gal_btns.append((m, b))
+            self._act_btns += (b,)
+        self.b_edit = next((b for m, b in self.pro_gal_btns if m is EDITOR), None)
         self._act_sig = None
         acts.bind("<Configure>", lambda e: self._layout_actions())
         self._layout_actions(force_width=640)
@@ -4231,6 +4553,11 @@ class ImageStudio:
         inst = core.is_detailer_installed(self.paths)
         out.append(("det:" + dt["key"], f"{'✔' if inst else '⬇'} [{t('kind_detailer')}] {t('detailer_name')} | {dt['size']} | "
                                         f"{dt['license']} | {self._fit_text('ok')} | {t(dt['desc'])}"))
+        for m in PRO_MODULES:
+            try:
+                out += m.manage_items(self)
+            except Exception:
+                self._write_file_log(f"{m.__name__}.manage_items:\n" + traceback.format_exc())
         return out
 
     def refresh_lists(self):
@@ -4252,6 +4579,10 @@ class ImageStudio:
 
     def apply_lang(self):
         self.btn_style.config(text=t("btn_style"))
+        for m, b in self.pro_btns:
+            b.config(text=m.feature_text())
+        for m, b in self.pro_gal_btns:
+            b.config(text=m.gallery_text())
         self.lbl_dev.config(text=t("dev_lbl"))
         self.lbl_prof.config(text=t("profile_lbl"))
         self.l1.config(text=t("sec1"))
@@ -4483,6 +4814,8 @@ class ImageStudio:
             self.bs.config(text=t("btn_start"), bg=BTN, activebackground="#555555")
         if self.style_win is not None and self.style_win.alive():
             self.style_win.update_state()
+        for w in self.pro_windows():
+            w.update_state()
 
     def start_job(self, kind, target, *args):
         if self.running():
@@ -4534,7 +4867,8 @@ class ImageStudio:
             self.r.after(200, nxt)
         # görsel üretimi ve eğitim / görsel okuma (analiz) başarıyla bitince; kullanıcı durdurduysa ya da hata
         # olduysa kapatılmaz. Sırada bekleyen bir iş varsa (ör. içe aktarmadan sonra okuma) o bitince kapatılır.
-        if kind in ("generate", "analysis") and ok and self.v_shutdown.get() and nxt is None:
+        if kind in ("generate", "analysis", "video", "vtrain", "vup", "aiup") and ok and self.v_shutdown.get() and \
+                nxt is None:
             self._trigger_shutdown()
 
     def _engine_broken_prompt(self):
@@ -4664,9 +4998,9 @@ class ImageStudio:
         btns.pack(fill="x", padx=14, pady=12)
 
         def ok():
-            host = core.normalize_image_host(v_addr.get())
+            host = core.normalize_server_host(v_addr.get())
             if not host:
-                messagebox.showwarning(t("img_host_add_title"), t("bad_ip"), parent=dlg)
+                messagebox.showwarning(t("img_host_add_title"), t("bad_server_host"), parent=dlg)
                 return
             res["v"] = (host, v_key.get().strip())
             dlg.destroy()
@@ -4764,19 +5098,23 @@ class ImageStudio:
     def start_api_server(self):
         self.stop_api_server(quiet=True)
         api = self.st["api"]
-        if api["lan"] and not api["key"]:
+        net = bool(api["lan"] or api.get("internet"))
+        if net and not api["key"]:
             api["key"] = core.new_api_key()
             self.save()
         try:
-            self.api_server = core.ApiServer(ApiBackend(self), lan=api["lan"], port=api["port"],
-                                             key=api["key"] if api["lan"] else "").start()
-        except OSError as e:
+            self.api_server = core.ApiServer(ApiBackend(self), lan=api["lan"],
+                                             internet=bool(api.get("internet")), port=api["port"],
+                                             key=api["key"] if net else "").start()
+        except (OSError, ValueError) as e:
             self.api_server = None
             self.log(t("api_log_port_busy", port=api["port"], err=str(e)[:120]))
             self.update_net_label()
             return False
         self.log(t("api_log_started", urls=", ".join(self.api_server.urls())))
-        if api["lan"]:
+        if api.get("internet"):
+            self.log(t("api_log_internet"))
+        elif api["lan"]:
             self.log(t("api_log_firewall"))
         self.update_net_label()
         return True
@@ -4833,7 +5171,7 @@ class ImageStudio:
         dlg.transient(self.r)
         f = self.f
         v_on = tk.BooleanVar(value=self.api_server is not None)
-        v_lan = tk.BooleanVar(value=api["lan"])
+        v_mode = tk.IntVar(value=2 if api.get("internet") else (1 if api["lan"] else 0))
         v_port = tk.StringVar(value=str(api["port"]))
         v_up = tk.BooleanVar(value=api["uploads"])
         v_key = tk.StringVar(value=api["key"])
@@ -4842,8 +5180,16 @@ class ImageStudio:
         ttk.Checkbutton(dlg, text=t("net_enable"), variable=v_on).pack(anchor="w", padx=14, pady=2)
         rf = tk.Frame(dlg, bg=CARD_BG)
         rf.pack(fill="x", padx=30)
-        ttk.Radiobutton(rf, text=t("net_only_me"), variable=v_lan, value=False).pack(anchor="w")
-        ttk.Radiobutton(rf, text=t("net_lan"), variable=v_lan, value=True).pack(anchor="w")
+        ttk.Radiobutton(rf, text=t("net_only_me"), variable=v_mode, value=0).pack(anchor="w")
+        ttk.Radiobutton(rf, text=t("net_lan"), variable=v_mode, value=1).pack(anchor="w")
+        ttk.Radiobutton(rf, text=t("net_internet"), variable=v_mode, value=2).pack(anchor="w")
+        lbl_mode = tk.Label(dlg, bg=CARD_BG, fg="#e0a030", font=f.n9, justify="left", wraplength=620, anchor="w")
+        lbl_mode.pack(fill="x", padx=30, pady=(0, 2))
+
+        def on_mode(*_):
+            lbl_mode.config(text=t("net_internet_note") if v_mode.get() == 2 else "")
+        v_mode.trace_add("write", on_mode)
+        on_mode()
         g = tk.Frame(dlg, bg=CARD_BG)
         g.pack(fill="x", padx=30, pady=4)
         tk.Label(g, text=t("net_port"), bg=CARD_BG, fg=LBL, font=f.n9).grid(row=0, column=0, sticky="w")
@@ -4882,13 +5228,19 @@ class ImageStudio:
             except ValueError:
                 messagebox.showwarning(t("net_title"), t("net_bad_port"), parent=dlg)
                 return
-            if v_lan.get() and not v_key.get():
+            mode = int(v_mode.get())
+            lan, internet = mode >= 1, mode == 2
+            if (lan or internet) and not v_key.get():
                 v_key.set(core.new_api_key())
-            api.update(enabled=bool(v_on.get()), lan=bool(v_lan.get()), port=port, uploads=bool(v_up.get()),
-                       key=v_key.get())
+            if internet and not v_key.get():          # internet modu anahtarsız olamaz
+                messagebox.showwarning(t("net_title"), t("net_need_key"), parent=dlg)
+                return
+            api.update(enabled=bool(v_on.get()), lan=lan, internet=internet, port=port,
+                       uploads=bool(v_up.get()), key=v_key.get())
             self.save()
             if api["enabled"]:
-                self.start_api_server()
+                if not self.start_api_server():
+                    messagebox.showwarning(t("net_title"), t("net_start_fail"), parent=dlg)
             else:
                 self.stop_api_server()
             show_state()
@@ -5003,8 +5355,11 @@ class ImageStudio:
 
     # ------------------------------------------------------------- download plan (UI thread)
     def _plan(self, engine=False, model=None, upscaler=False, llm=None, detailer=False, peft=False, captioner=False,
-              cv2=False, train_base=None):
-        """Neyin indirileceğini listeler ve TEK bir onay ister. Dönüş: plan sözlüğü ya da None (iptal)."""
+              cv2=False, train_base=None, extra=None):
+        """
+        Neyin indirileceğini listeler ve TEK bir onay ister. Dönüş: plan sözlüğü ya da None (iptal).
+        extra: PRO modüllerinin kendi indirmeleri [(ad, boyut, hedef klasör, plan anahtarı)] — yalnızca eksik olanlar.
+        """
         items, plan = [], {}
         if engine and not core.engine_status(self.paths):
             dl, disk = core.ENGINE_SIZE[core.engine_kind(self.hw)]
@@ -5023,7 +5378,7 @@ class ImageStudio:
                 plan["model_config"] = True
         elif model and not core.is_image_model_installed(self.paths.models, model):
             items.append((f"{model['name']} — {model['license']}", f"~{model['size_gb']:.1f} GB",
-                          os.path.join(self.paths.models, "image")))
+                          os.path.dirname(core.image_model_dir(self.paths.models, model))))
             plan["model"] = True
         if train_base and not core.is_train_base_installed(self.paths.models, train_base):
             sp = core.TRAIN_SPECS[train_base]
@@ -5073,6 +5428,9 @@ class ImageStudio:
                             mdir = self.paths.ollama_models
                     items.append((lm["name"], lm["size"], mdir))
                     plan["llm_pull"] = llm
+        for name, size, dest, key in (extra or ()):
+            items.append((name, size, dest))
+            plan[key] = True
         if items and not self._confirm_downloads(items):
             return None
         return plan
@@ -5149,6 +5507,27 @@ class ImageStudio:
         core.download_captioner(self.paths.models, self.bytes_progress, self.abort)
         self.log(t("log_download_done", name=c["name"]))
         self.post(self.refresh_lists)
+
+    def ensure_llm_for_server(self, name, job=None):
+        """Sunucu modu: yalnızca bu bilgisayarda kurulu LLM'i kullanır (istek üzerine indirme YOK)."""
+        c = self.client("local")
+        if not c.alive(timeout=1.5, force=True):
+            if not core.ollama_installed(self.paths) or not core.start_local_ollama(self.paths, c):
+                return None
+        if not core.model_in_list(name, c.installed_models()):
+            return None
+        return c
+
+    def server_captioner(self):
+        """Sunucu modu: açıklama modeli (Florence-2) bir kez yüklenip saklanır. Kurulu değilse None."""
+        if not core.is_captioner_installed(self.paths.models):
+            return None
+        cap = getattr(self, "_srv_captioner", None)
+        if cap is None:
+            device = "cuda" if self.hw.cuda_usable else "cpu"
+            cap = core.Captioner(core.captioner_dir(self.paths.models), device)
+            self._srv_captioner = cap
+        return cap
 
     def captioner_ok(self, parent=None):
         """Kurulu motor Florence-2'yi tanıyor mu? (Motor henüz kurulmadıysa yeni kurulum en güncel sürümü getirir.)"""
@@ -5362,6 +5741,10 @@ class ImageStudio:
         item = self.v_manage.get()
         if not item:
             return
+        pm = pro_module_for(item)
+        if pm is not None:
+            pm.on_download(self, item)
+            return
         if item == "engine":
             if core.engine_status(self.paths):
                 if not messagebox.askyesno(APP_NAME, t("engine_reinstall_q"), parent=self.r):
@@ -5410,6 +5793,10 @@ class ImageStudio:
         self.start_job("download", self.job_download, item, plan)
 
     def job_download(self, item, plan):
+        pm = pro_module_for(item)
+        if pm is not None:
+            pm.job_download(self, item, plan)
+            return
         if item == "engine":
             self._install_engine()
         elif item.startswith("img:"):
@@ -5442,6 +5829,10 @@ class ImageStudio:
     def on_delete(self):
         item = self.v_manage.get()
         if not item or self.running():
+            return
+        pm = pro_module_for(item)
+        if pm is not None:
+            pm.on_delete(self, item)
             return
         if item == "engine":
             if not core.engine_status(self.paths) and not os.path.isdir(self.paths.venv):
@@ -5551,6 +5942,17 @@ class ImageStudio:
             return
         self.start_job("generate", self.job_generate, params)
 
+    def server_op(self, kind, params, image_png=None, on_log=True):
+        """Sunucu modunda bir işi (LLM / açıklama / …) ağdaki sunucuda çalıştırır; ilerleme ve günlük geri gelir."""
+        r = self.remote
+        cl = core.ImageServerClient(r["host"], r["key"])
+        try:
+            return cl.run_op(kind, params, input_png=image_png,
+                             on_progress=lambda pct, txt="": self.progress(pct, txt),
+                             on_log=(self.log if on_log else None), abort_event=self.abort)
+        finally:
+            cl.close()
+
     def _prepare_prompt(self, p, m):
         """LLM katmanı: çeviri + pozitif/negatif + otomatik ayarlar. Sonra yereldeki LLM'i VRAM'den boşaltır."""
         auto_fields = set()
@@ -5565,45 +5967,43 @@ class ImageStudio:
         if p["use_llm"]:
             self.status("status_llm")
             try:
-                if p["llm_host"] == "local":
-                    c = self._ensure_local_llm(p["llm"], p["plan"])
+                if self.image_remote():
+                    # sunucu modu: istem sunucunun kendi LLM'inde hazırlanır (bu bilgisayarda LLM gerekmez)
+                    out = self.server_op("llm", {"model": m["key"], "llm": p["llm"], "text": p["text"],
+                                                 "extra": p["extra"], "auto_fields": sorted(auto_fields)})
+                    r = out.get("result") or {}
+                    if r.get("positive"):
+                        res = r
+                        self.log(t("log_llm_prompt", p=res["positive"]))
+                        if m["neg"] and res.get("negative"):
+                            self.log(t("log_llm_neg", n=res["negative"]))
+                        chosen = [f"{k}={res[k]}" for k in ("aspect", "orientation", "creativity") if k in res]
+                        if chosen:
+                            self.log(t("log_llm_settings", s=", ".join(chosen)))
+                    else:
+                        self.log(t("log_ollama_fail"))
+                        res = raw_res
                 else:
-                    c = self._ensure_remote_llm(p["llm_host"], p["llm"])
-                if c is not None:
-                    if c.is_local:
-                        self.engine.park()
-                    system, user, schema = core.build_llm_request(m, p["text"], p["extra"], auto_fields)
-                    self.status("status_llm")
-                    raw = c.chat_json(p["llm"], system, user, schema, temperature=0.2, max_tokens=600)
-                    res = core.sanitize_llm_result(raw, auto_fields)
-                    if not res["positive"]:
-                        raise ValueError("empty prompt")
-                    if core.llm_too_long(m, p["text"], res["positive"]):
-                        # kısa isteğe destan yazdı: kendi eklediklerini sildir (olmazsa aşağıda kısaltılır)
-                        try:
-                            s2, u2, sc2 = core.build_llm_cleanup(m, p["text"], res["positive"])
-                            self.status("status_llm")
-                            raw2 = c.chat_json(p["llm"], s2, u2, sc2, temperature=0.1, max_tokens=400)
-                            cleaned = str(raw2.get("positive", "")).strip() if isinstance(raw2, dict) else ""
-                            if cleaned and len(cleaned.split()) < len(res["positive"].split()):
-                                self.log(t("log_llm_cleaned", n=len(res["positive"].split()),
-                                           m=len(cleaned.split())))
-                                res["positive"] = cleaned
-                        except core.AbortedError:
-                            raise
-                        except Exception as e:
-                            self._write_file_log("LLM cleanup failed: %s" % e)
-                    res, notes = core.check_llm_prompt(m, p["text"], p["extra"], res)
-                    for kind, info in notes:
-                        self.log(t("log_llm_" + kind, **info))
-                    self.log(t("log_llm_prompt", p=res["positive"]))
-                    if m["neg"] and res["negative"]:
-                        self.log(t("log_llm_neg", n=res["negative"]))
-                    chosen = [f"{k}={res[k]}" for k in ("aspect", "orientation", "creativity") if k in res]
-                    if chosen:
-                        self.log(t("log_llm_settings", s=", ".join(chosen)))
-                else:
-                    self.log(t("log_ollama_fail"))
+                    if p["llm_host"] == "local":
+                        c = self._ensure_local_llm(p["llm"], p["plan"])
+                    else:
+                        c = self._ensure_remote_llm(p["llm_host"], p["llm"])
+                    if c is not None:
+                        res, notes, cleaned = core.llm_make_prompt(
+                            c, p["llm"], m, p["text"], p["extra"], auto_fields,
+                            park_cb=self.engine.park, status_cb=lambda: self.status("status_llm"))
+                        if cleaned:
+                            self.log(t("log_llm_cleaned", n=cleaned[0], m=cleaned[1]))
+                        for kind, info in notes:
+                            self.log(t("log_llm_" + kind, **info))
+                        self.log(t("log_llm_prompt", p=res["positive"]))
+                        if m["neg"] and res["negative"]:
+                            self.log(t("log_llm_neg", n=res["negative"]))
+                        chosen = [f"{k}={res[k]}" for k in ("aspect", "orientation", "creativity") if k in res]
+                        if chosen:
+                            self.log(t("log_llm_settings", s=", ".join(chosen)))
+                    else:
+                        self.log(t("log_ollama_fail"))
             except core.AbortedError:
                 raise
             except Exception as e:
@@ -5998,7 +6398,8 @@ class ImageStudio:
         if not it:
             messagebox.showinfo(APP_NAME, t("no_image"), parent=self.r)
             return
-        plan = self._plan(engine=True, upscaler=True)
+        # Sunucu modunda büyütme sunucuda çalışır — bu bilgisayarda motor/büyütme modeli indirmesi istenmez.
+        plan = {} if self.image_remote() else self._plan(engine=True, upscaler=True)
         if plan is None:
             return
         self.start_job("upscale", self.job_upscale, it["path"], dict(it.get("meta") or {}), plan)
@@ -6006,6 +6407,8 @@ class ImageStudio:
     def job_upscale(self, src, meta, plan):
         from PIL import Image
         from PIL.PngImagePlugin import PngInfo
+        if self.image_remote():
+            return self._job_upscale_remote(src, meta)
         if not core.engine_status(self.paths):
             if not plan.get("engine"):
                 raise JobFail()
@@ -6046,6 +6449,34 @@ class ImageStudio:
         dst = base + "_2x.png"
         core.check_space(dst, 0.1)
         out.save(dst, pnginfo=info)
+        self.log(t("log_upscale_done", path=dst, sec=time.time() - t0))
+        self.post(self.add_to_gallery, dst, meta, True)
+        self.progress(100)
+        self.status("status_done")
+
+    def _job_upscale_remote(self, src, meta):
+        """Sunucu modu: büyütme ağdaki sunucuda çalışır; bu bilgisayarda büyütme modeli gerekmez."""
+        from PIL.PngImagePlugin import PngInfo
+        self.status("status_upscale")
+        t0 = time.time()
+        with open(src, "rb") as f:
+            png_in = f.read()
+        out = self.server_op("upscale", {"meta": dict(meta or {})}, image_png=png_in)
+        if not out.get("images"):
+            raise JobFail()
+        png_out, rmeta = out["images"][0]
+        meta = dict(meta or {})
+        meta.update(rmeta or {})
+        info = PngInfo()
+        info.add_text("ails", json.dumps(meta, ensure_ascii=False))
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(png_out))
+        img.load()
+        base, _ext = os.path.splitext(src)
+        dst = base + "_2x.png"
+        core.check_space(dst, 0.1)
+        img.save(dst, pnginfo=info)
         self.log(t("log_upscale_done", path=dst, sec=time.time() - t0))
         self.post(self.add_to_gallery, dst, meta, True)
         self.progress(100)
@@ -6215,6 +6646,30 @@ class ImageStudio:
         self.r.clipboard_clear()
         self.r.clipboard_append((it.get("meta") or {}).get("prompt", ""))
         self.log(t("prompt_copied"))
+
+    def on_pro_selected(self, m):
+        """Galerideki seçili görseli bir PRO penceresinde (düzenleyici / video / AI büyütme) aç."""
+        it = self.selected_item()
+        if not it:
+            messagebox.showinfo(APP_NAME, t("no_image"), parent=self.r)
+            return
+        m.open_window(self, it["path"])
+
+    def on_edit_selected(self):
+        if EDITOR:
+            self.on_pro_selected(EDITOR)
+
+    def pro_windows(self):
+        """Açık PRO pencereleri."""
+        out = []
+        for m in PRO_MODULES:
+            try:
+                w = m.current_window(self)
+                if w is not None and w.alive():
+                    out.append(w)
+            except Exception:
+                pass
+        return out
 
     def on_reuse(self):
         it = self.selected_item()
@@ -6589,6 +7044,9 @@ class ImageStudio:
         lines.append("• YuNet face detector (opencv/opencv_zoo) — MIT")
         lines.append("• MediaPipe palm detector (opencv/opencv_zoo, Google) — Apache-2.0")
         lines.append("• lbpcascade_animeface (nagadomi) — MIT")
+        for pm in PRO_MODULES:
+            for name, lic in getattr(pm, "LICENSES", ()):
+                lines.append(f"• {name} — {lic}")
         lines += ["", t("lic_rail"), "", "— Software —",
                   "• Python — PSF License", "• Tcl/Tk — Tcl/Tk License (BSD-style)", "• PyTorch — BSD-3-Clause",
                   "• Hugging Face diffusers / transformers / accelerate / huggingface_hub / safetensors / tokenizers / "
@@ -6654,6 +7112,11 @@ class ImageStudio:
 
     def on_close(self):
         self.abort.set()
+        for w in self.pro_windows():
+            try:
+                w.collect()
+            except Exception:
+                pass
         self.save()
         self.stop_api_server(quiet=True)
         self._cancel_shutdown()
@@ -6673,7 +7136,34 @@ class ImageStudio:
 # =============================================================================
 # Giriş noktaları
 # =============================================================================
+def _install_gui_guard(root, paths=None):
+    """Konsolsuz (windowed) exe'de sys.stderr None olur; bir pencere açılırken (ör. 🎬 video) oluşan bir hatada
+    Tk'nin varsayılan raporlayıcısı None'a yazmaya çalışıp programı SESSİZCE ÇÖKERTİR. Bu yakalayıcı hatayı
+    dosyaya yazar ve kullanıcıya mesaj gösterir; program açık kalır."""
+    def handler(exc, val, tb):
+        try:
+            txt = "".join(traceback.format_exception(exc, val, tb))
+        except Exception:
+            txt = str(val)
+        try:
+            if paths is not None:
+                os.makedirs(paths.logs, exist_ok=True)
+                with open(os.path.join(paths.logs, "gui_errors.log"), "a", encoding="utf-8") as f:
+                    f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n" + txt + "\n\n")
+        except Exception:
+            pass
+        try:
+            messagebox.showerror(APP_NAME, friendly_error(val), parent=root)
+        except Exception:
+            pass
+    try:
+        root.report_callback_exception = handler
+    except Exception:
+        pass
+
+
 def gui_main():
+    ensure_std_streams()
     cfg = load_pointer()
     if not cfg.get("data_root"):
         return launcher_main()
@@ -6683,12 +7173,14 @@ def gui_main():
     if not ensure_license_ack(cfg):      # program doğrudan kendi ortamından açıldıysa da koşullar sorulur
         return 0
     root = tk.Tk()
+    _install_gui_guard(root, paths)
     ImageStudio(root, paths)
     root.mainloop()
     return 0
 
 
 def main():
+    ensure_std_streams()
     if "--ails-child" in sys.argv:
         sys.exit(gui_main() or 0)
     cfg = load_pointer()

@@ -2484,6 +2484,45 @@ def normalize_image_host(text):
     return f"{host}:{int(port)}"
 
 
+_HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$")
+
+
+def normalize_server_host(text):
+    """
+    Sunucu adresi: yerel ağ IP'si, bu bilgisayar, genel IP ya da alan adı (internet üzerinden erişim için).
+    'myserver.duckdns.org:7860', '203.0.113.5', 'http://host:7860/' → 'host:port'. Geçersizse None.
+    """
+    s = re.sub(r"^https?://", "", (text or "").strip(), flags=re.I).strip("/ ")
+    if not s:
+        return None
+    if s.startswith("[") and "]" in s:               # IPv6 köşeli parantez
+        host, _, port = s[1:].partition("]")
+        port = port.lstrip(":") or str(API_PORT)
+    else:
+        host, _, port = s.partition(":")
+        port = port or str(API_PORT)
+    if not port.isdigit() or not (0 < int(port) < 65536) or not host:
+        return None
+    if host in ("localhost", "127.0.0.1"):
+        return f"127.0.0.1:{int(port)}"
+    if is_valid_ip(host) or _HOSTNAME_RE.match(host):
+        return f"{host}:{int(port)}"
+    return None
+
+
+def is_valid_ip(host):
+    try:
+        socket.inet_aton(host)
+        return host.count(".") == 3
+    except OSError:
+        pass
+    try:
+        socket.inet_pton(socket.AF_INET6, host)
+        return True
+    except (OSError, AttributeError):
+        return False
+
+
 _SHA1_CACHE = {}
 _SHA1_LOCK = threading.Lock()
 
@@ -2564,22 +2603,39 @@ class ApiJob:
         self.id = uuid.uuid4().hex[:12]
         self.params = params
         self.source = source
+        self.kind = str(params.get("_kind") or "generate") if isinstance(params, dict) else "generate"
         self.state = "queued"          # queued | running | done | error | stopped
         self.progress = 0.0
         self.text = ""
         self.images = []               # [(png bytes, meta)]
+        self.logs = []                 # sunucudaki iş günlüğü satırları (istemciye akar)
+        self.files = []                # üretilen dosyalar: [(disk yolu, {"name","kind","bytes"})]
+        self.result = {}               # ek sonuç verisi (örn. LLM prompt'u)
         self.error = None
         self.created = time.time()
         self.finished = None
         self.abort = threading.Event()
         self.done = threading.Event()
 
-    def public(self, since=0):
+    def log(self, line):
+        self.logs.append(str(line))
+
+    def add_file(self, path, kind="file", name=None):
+        try:
+            n = os.path.getsize(path)
+        except OSError:
+            n = 0
+        self.files.append((path, {"name": name or os.path.basename(path), "kind": kind, "bytes": n}))
+
+    def public(self, since=0, log_since=0, file_since=0):
         import base64
-        return {"id": self.id, "state": self.state, "progress": round(self.progress, 1), "text": self.text,
-                "error": self.error, "count": len(self.images),
+        return {"id": self.id, "kind": self.kind, "state": self.state, "progress": round(self.progress, 1),
+                "text": self.text, "error": self.error, "count": len(self.images), "result": self.result,
                 "images": [{"index": i, "png": base64.b64encode(b).decode("ascii"), "meta": m}
-                           for i, (b, m) in enumerate(self.images) if i >= since]}
+                           for i, (b, m) in enumerate(self.images) if i >= since],
+                "logs": [{"index": i, "line": ln} for i, ln in enumerate(self.logs) if i >= log_since],
+                "files": [{"index": i, "name": meta["name"], "kind": meta["kind"], "bytes": meta["bytes"]}
+                          for i, (_p, meta) in enumerate(self.files) if i >= file_since]}
 
 
 class ApiServer:
@@ -2588,11 +2644,15 @@ class ApiServer:
     gerçek üretimi 'backend' yapar (programın kendi iş sistemi — arayüzdeki üretimle aynı yol).
     """
 
-    def __init__(self, backend, lan=False, port=API_PORT, key=""):
+    def __init__(self, backend, lan=False, port=API_PORT, key="", internet=False):
         self.backend = backend
-        self.lan = bool(lan)
+        self.internet = bool(internet)
+        # İnternet modu ağ bağlamayı da gerektirir; anahtar zorunludur (aşağıda garanti).
+        self.lan = bool(lan) or self.internet
         self.port = int(port)
         self.key = key or ""
+        if self.internet and not self.key:
+            raise ValueError("internet mode requires a key")
         self.httpd = None
         self.jobs = {}
         self.queue = []
@@ -2639,13 +2699,17 @@ class ApiServer:
     def urls(self):
         if not self.lan:
             return [f"http://127.0.0.1:{self.port}"]
-        return [f"http://{ip}:{self.port}" for ip in lan_ipv4_addresses()] or [f"http://<IP>:{self.port}"]
+        local = [f"http://{ip}:{self.port}" for ip in lan_ipv4_addresses()] or [f"http://<IP>:{self.port}"]
+        if self.internet:
+            # Dışarıdan erişim için yönlendirici/port açma ya da bir tünel gerekir; genel adresi kullanıcı bilir.
+            local.append(f"http://<genel-adres>:{self.port}")
+        return local
 
     # ---- kimlik
     def authorized(self, headers, client_ip):
         if not self.key:
             return True
-        if client_ip in ("127.0.0.1", "::1") and not self.lan:
+        if client_ip in ("127.0.0.1", "::1") and not self.lan and not self.internet:
             return True
         import base64
         import hmac
@@ -2686,7 +2750,9 @@ class ApiServer:
         return True
 
     def client_allowed(self, ip):
-        """Ağ modunda yalnızca yerel ağdan ve bu bilgisayardan gelen bağlantılar."""
+        """LAN modunda yalnızca yerel ağ; internet modunda her IP (anahtar zorunlu olduğundan güvenli)."""
+        if self.internet:
+            return True
         return ip in ("127.0.0.1", "::1") or is_private_lan_ip(ip)
 
     # ---- işler
@@ -2736,7 +2802,8 @@ class ApiServer:
             job.state = "running"
             try:
                 self.backend.run(job)
-                job.state = "stopped" if job.abort.is_set() and not job.images else "done"
+                has_out = bool(job.images or job.files or job.result)
+                job.state = "stopped" if job.abort.is_set() and not has_out else "done"
             except AbortedError:
                 job.state, job.error = "stopped", "stopped"
             except ApiError as e:
@@ -2862,6 +2929,20 @@ def _make_api_handler(server):
                     params = b.prepare(self._body(), source=self.client_address[0], kind="ails")
                     job = server.submit(params, self.client_address[0])
                     return self._send(200, {"id": job.id})
+                if method == "POST" and path == "/api/op":
+                    # genel iş: üretim dışı özellikler de (büyütme, video, açıklama, LLM) aynı iş protokolünden geçer
+                    params = b.prepare_op(self._body(API_MAX_UPLOAD), source=self.client_address[0])
+                    job = server.submit(params, self.client_address[0])
+                    return self._send(200, {"id": job.id, "kind": job.kind})
+                if method == "GET" and path == "/api/job/file":
+                    jid = (qs.get("id") or [""])[0]
+                    job = server.jobs.get(jid)
+                    if job is None:
+                        raise ApiError(404, "job not found")
+                    i = int((qs.get("i") or ["0"])[0] or 0)
+                    if not (0 <= i < len(job.files)):
+                        raise ApiError(404, "file not found")
+                    return self._send_file(job.files[i][0], name=job.files[i][1]["name"])
                 if path.startswith("/api/jobs/"):
                     jid = path.rsplit("/", 1)[1]
                     job = server.jobs.get(jid)
@@ -2871,7 +2952,9 @@ def _make_api_handler(server):
                         server.cancel(jid)
                         return self._send(200, {"ok": True})
                     since = int((qs.get("since") or ["0"])[0] or 0)
-                    return self._send(200, job.public(since))
+                    log_since = int((qs.get("logs") or ["0"])[0] or 0)
+                    file_since = int((qs.get("files") or ["0"])[0] or 0)
+                    return self._send(200, job.public(since, log_since, file_since))
                 if method == "POST" and path == "/api/generate":
                     params = b.prepare(self._body(), source=self.client_address[0], kind="ails")
                     job = server.wait(server.submit(params, self.client_address[0]))
@@ -2937,13 +3020,13 @@ def _make_api_handler(server):
                 return self._send(200, {"images": imgs, "parameters": body, "info": json.dumps(info, ensure_ascii=False)})
             raise ApiError(404, "unsupported A1111 endpoint: " + ep)
 
-        def _send_file(self, p):
+        def _send_file(self, p, name=None):
             size = os.path.getsize(p)
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(size))
             from urllib.parse import quote
-            fn = os.path.basename(p)
+            fn = name or os.path.basename(p)
             ascii_fn = fn.encode("ascii", "replace").decode("ascii").replace('"', "").replace("?", "_")
             self.send_header("Content-Disposition",       # başlıklar latin-1: Türkçe ad UTF-8 olarak ayrıca verilir
                              "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_fn, quote(fn)))
@@ -3092,13 +3175,81 @@ class ImageServerClient:
     def submit(self, params):
         return self._req("POST", "/api/jobs", timeout=30, json=params).json()["id"]
 
-    def job(self, jid, since=0):
-        return self._req("GET", f"/api/jobs/{jid}?since={since}", timeout=60).json()
+    def submit_op(self, params):
+        return self._req("POST", "/api/op", timeout=60, json=params).json()["id"]
+
+    def job(self, jid, since=0, logs=0, files=0):
+        return self._req("GET", f"/api/jobs/{jid}?since={since}&logs={logs}&files={files}", timeout=60).json()
 
     def cancel(self, jid):
         try:
             self._req("DELETE", f"/api/jobs/{jid}", timeout=10)
         except Exception:
+            pass
+
+    def download_job_file(self, jid, i, dest, progress_cb=None, abort_event=None):
+        r = self._req("GET", f"/api/job/file?id={jid}&i={i}", timeout=(10, 1200), stream=True)
+        total = int(r.headers.get("Content-Length") or 0)
+        got = 0
+        tmp = dest + ".part"
+        with r, open(tmp, "wb") as f:
+            for chunk in r.iter_content(1 * MB):
+                if abort_event is not None and abort_event.is_set():
+                    raise AbortedError("user")
+                f.write(chunk)
+                got += len(chunk)
+                if progress_cb:
+                    progress_cb(got, total)
+        os.replace(tmp, dest)
+        return dest
+
+    def run_op(self, kind, params, input_png=None, on_image=None, on_progress=None, on_log=None,
+               abort_event=None, poll=0.4):
+        """
+        Üretim dışı bir işi (büyütme / video / açıklama / LLM) sunucuda çalıştırır; ilerleme, günlük satırları ve
+        üretilen görselleri geldikçe iletir. Dönüş: {"result": {...}, "images": [(png, meta)], "files": [{...}]}.
+        input_png: tek giriş görseli (PNG bytes) — büyütme / video / açıklama için.
+        """
+        import base64
+        body = dict(params or {})
+        body["_kind"] = kind
+        if input_png is not None:
+            body["_input_png"] = base64.b64encode(input_png).decode("ascii")
+        jid = self.submit_op(body)
+        img_cur = log_cur = file_cur = 0
+        out = {"result": {}, "images": [], "files": [], "id": jid}
+        try:
+            while True:
+                if abort_event is not None and abort_event.is_set():
+                    self.cancel(jid)
+                    raise AbortedError("user")
+                st = self.job(jid, since=img_cur, logs=log_cur, files=file_cur)
+                for ln in st.get("logs") or []:
+                    log_cur = max(log_cur, ln["index"] + 1)
+                    if on_log:
+                        on_log(ln["line"])
+                if st.get("progress") is not None and on_progress:
+                    on_progress(float(st["progress"]), st.get("text") or "")
+                for im in st.get("images") or []:
+                    img_cur = max(img_cur, im["index"] + 1)
+                    png = base64.b64decode(im["png"])
+                    out["images"].append((png, im.get("meta") or {}))
+                    if on_image:
+                        on_image(png, im.get("meta") or {})
+                for fd in st.get("files") or []:
+                    file_cur = max(file_cur, fd["index"] + 1)
+                    out["files"].append(fd)
+                if st.get("result"):
+                    out["result"] = st["result"]
+                state = st.get("state")
+                if state in ("done", "error", "stopped"):
+                    if state == "error":
+                        raise ApiError(500, st.get("error") or "server job failed")
+                    if state == "stopped" and not (out["images"] or out["files"] or out["result"]):
+                        raise AbortedError("user")
+                    return out
+                time.sleep(poll)
+        finally:
             pass
 
 
@@ -3212,6 +3363,40 @@ def build_llm_cleanup(model, user_text, positive):
         user += "\n\nThe description says: " + ", ".join(must) + ". Keep exactly this word."
     schema = {"type": "object", "properties": {"positive": {"type": "string"}}, "required": ["positive"]}
     return system, user, schema
+
+
+def llm_make_prompt(client, llm_name, model, user_text, extra_text, auto_fields, park_cb=None, status_cb=None):
+    """
+    Bir görsel istemini LLM ile İngilizce prompt'a çevirir (iki geçiş: yaz → kısa isteğe uzun yazdıysa temizle).
+    Hem arayüz hem ağ sunucusu aynı yoldan geçsin diye buraya toplandı.
+    client: OllamaClient; llm_name: ollama modeli (ör. 'qwen3:4b'); model: görsel modeli sözlüğü.
+    Dönüş: (res, notes, cleaned_from) — cleaned_from: (eski, yeni) kelime sayısı ya da None.
+    """
+    status = status_cb or (lambda *a, **k: None)
+    if getattr(client, "is_local", False) and park_cb:
+        park_cb()
+    system, user, schema = build_llm_request(model, user_text, extra_text, auto_fields)
+    status()
+    raw = client.chat_json(llm_name, system, user, schema, temperature=0.2, max_tokens=600)
+    res = sanitize_llm_result(raw, auto_fields)
+    if not res["positive"]:
+        raise ValueError("empty prompt")
+    cleaned_from = None
+    if llm_too_long(model, user_text, res["positive"]):
+        try:
+            s2, u2, sc2 = build_llm_cleanup(model, user_text, res["positive"])
+            status()
+            raw2 = client.chat_json(llm_name, s2, u2, sc2, temperature=0.1, max_tokens=400)
+            cleaned = str(raw2.get("positive", "")).strip() if isinstance(raw2, dict) else ""
+            if cleaned and len(cleaned.split()) < len(res["positive"].split()):
+                cleaned_from = (len(res["positive"].split()), len(cleaned.split()))
+                res["positive"] = cleaned
+        except AbortedError:
+            raise
+        except Exception:
+            pass
+    res, notes = check_llm_prompt(model, user_text, extra_text, res)
+    return res, notes, cleaned_from
 
 
 def sanitize_llm_result(d, auto_fields):
@@ -4300,7 +4485,7 @@ WEB_MAX_PER_BATCH = 500
 WEB_MAX_MB = 25
 WEB_MIN_DELAY = 1.0
 # Wikimedia vb. sunucular, kim olduğunu ve iletişim adresini söyleyen bir User-Agent ister.
-APP_UA = "AILocalImageStudio/1.4.8 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
+APP_UA = "AILocalImageStudio/1.6.3 (+https://github.com/etemcankvrc/AI-Local-Image-Studio; one request per second)"
 
 # Openverse (WordPress): Wikimedia, Flickr, müzeler vb. kaynaklardaki AÇIK LİSANSLI görsellerde arama.
 # Anahtarsız kullanım sınırları (Openverse kaynak kodundaki varsayılanlar): sayfa başına en fazla 20 sonuç,
@@ -5958,9 +6143,31 @@ def trash_dir(paths):
     return os.path.join(own_lora_dir(paths), ".trash")
 
 
+def _move_to_trash(src, dst, tries=6):
+    """Windows'ta yeni silinen LoRA dosyası motor tarafından bellek-eşlemeli (mmap) açık olabilir: taşıma
+    'kullanımda' hatası verir. Çöp toplama + GPU bellek boşaltma ile birkaç kez dener."""
+    import gc
+    last = None
+    for i in range(tries):
+        try:
+            shutil.move(src, dst)
+            return
+        except (PermissionError, OSError) as e:
+            last = e
+            gc.collect()
+            try:
+                free_gpu_memory()
+            except Exception:
+                pass
+            time.sleep(0.4 + 0.2 * i)
+    if last:
+        raise last
+
+
 def trash_own_item(paths, item):
-    """Programın ürettiği bir LoRA'yı ya da kelime kartını kalıcı silmez: loras\\.trash\\<tarih-saat>\\ içine taşır
-    (LoRA ise bilgi dosyası ve örnek görselleriyle). Dönüş: (klasör, taşınanlar)."""
+    """Bir LoRA'yı ya da kelime kartını kalıcı silmez: loras\\.trash\\<tarih-saat>\\ içine taşır (LoRA ise bilgi
+    dosyası ve örnek görselleriyle). Hem programın ürettiği (own) hem de kullanıcının eklediği (external) LoRA'lar
+    için çalışır. Dönüş: (klasör, taşınanlar)."""
     d = os.path.join(trash_dir(paths), time.strftime("%Y%m%d-%H%M%S"))
     n = 2
     while os.path.exists(d):
@@ -5977,7 +6184,7 @@ def trash_own_item(paths, item):
     for f in files:
         if os.path.exists(f):
             dst = os.path.join(d, os.path.basename(f))
-            shutil.move(f, dst)
+            _move_to_trash(f, dst)
             moved.append(dst)
     return d, moved
 
@@ -8056,7 +8263,11 @@ def run_style_training(paths, hw, slug, tag, minutes=None, checkpoint_min=15, sa
         if people:
             n_faces += len(people)
             n_with += 1
-        text = ", ".join(x for x in (trigger, it.get("caption", ""), item_tags_text(it)) if x)
+        cap = it.get("caption", "") or ""
+        # Veri seti hazırlayıcısı tetik kelimeyi açıklamanın başına koymuş olabilir ("Karina woman, ...").
+        # O zaman tetiği tekrar başa EKLEME (çift trigger "Karina, Karina woman..." öğrenmeyi bozar).
+        trig = "" if (trigger and cap.strip().lower().lstrip(",: ").startswith(trigger.lower())) else trigger
+        text = ", ".join(x for x in (trig, cap, item_tags_text(it)) if x)
         for v in image_views(w, h, preset["views"]):
             entries.append((p, v, people or []) if hide else (p, v))
             texts.append(text)

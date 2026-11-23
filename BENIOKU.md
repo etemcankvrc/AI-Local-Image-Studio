@@ -1,8 +1,17 @@
-# 🎨 AI Local Image Studio v1.4.8
+# 🎨 AI Local Image Studio v1.8.1
 
 > 🇬🇧 English overview: **[README.md](README.md)**
 
 %100 yerel çalışan yapay zeka görsel oluşturucu. Görsel tarz **AI Local Translator** (SRT projesi) ile aynı: koyu tema, numaralı 1–7 bölümler, GPU çubuğu, log ekranı.
+
+> 💛 **PRO sürüm (Patreon destekçilerine):** tek tıkla kurulan Windows yapısı; bu depoda olmayan ayrı gelişmiş araçları ekler — 🎬 görselden video + video LoRA eğitimi, ✏️ ayrı görüntü editörü/rötuş, 🔍 ayrı toplu büyütme aracı ve 🧰 **Dataset Studio** (karakter LoRA'sı için homojen veri seti: tutarlı detaylı etiketleme, akıllı video kare seçimi, çeşitlilik/kalite dengeli seçim). Bu depodaki açık kaynak sürüm tek başına tamamen kullanılabilir (üretim, istem yazarı, LoRA eğitimi, ağ sunucusu). 👉 **[patreon.com/GTEtemcan](https://www.patreon.com/GTEtemcan)**
+
+## v1.8.1'de yeni — LoRA silme düzeltmesi, eğitimde canlı önizleme, kararlı yapılar
+
+- **LoRA silme düzeltildi:** artık yalnızca programın eğittiği değil, **kendi eklediğiniz LoRA'ları da** silebilirsiniz. Dosya silmeden önce serbest bırakılıp taşıma birkaç kez denenir; yüklü bir LoRA artık silmeyi engellemez. Silinenler yine `loras\.trash`'e taşınır, üzerine yazılmaz.
+- **Eğitim penceresi — canlı önizleme:** üretilen son örnek görsel artık doğrudan eğitim panelinde görünür; altında **"sonraki örnek ~X sonra"** geri sayımı vardır.
+- **Karakter LoRA eğitimi:** açıklama zaten tetik kelimeyle başlıyorsa tetik **ikinci kez eklenmez** (`tetik, tetik woman …` tekrarı önlendi).
+- **Daha kararlı yapılar:** pencereler (eğitim, ağ vb.) sorunsuz açılır; beklenmeyen bir hata artık programı kapatmak yerine mesaj gösterir ve `logs\gui_errors.log`'a yazılır.
 
 ## v1.4.8'de yeni — açılan listeler kesilmiyor, eğitim hızı ölçülüyor, anatomide yüz gizleme
 
