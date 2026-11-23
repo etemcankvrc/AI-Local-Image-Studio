@@ -1,24 +1,6 @@
 # -*- coding: utf-8 -*-
-"""
-AI Local Image Studio — çekirdek modül (arayüzden bağımsız).
-
-v1.0.1 ilkeleri:
-  * Tek konum kuralı: programın indirdiği HER ŞEY (görsel motoru, önbellekler, geçici dosyalar,
-    modeller, çıktılar) kullanıcının seçtiği veri klasörüne gider. Genel Python'a hiçbir şey kurulmaz;
-    program kendi sanal ortamını (runtime\\venv) kullanır.
-  * Hiçbir büyük indirme kullanıcı onayı olmadan başlamaz; indirmeden önce disk alanı kontrol edilir.
-  * PyTorch ana süreçte ancak ayrı bir süreçte sağlam olduğu doğrulandıktan sonra içe aktarılır.
-  * Ollama'nın kendi model konumu ayarına uyulur; ağdaki Ollama sunucuları ağı yormadan bulunur.
-
-v1.0.2:
-  * Daha yüksek adım ön ayarları + Ultra + elle adım, SD ailesinde DPM++ 2M Karras örnekleyici.
-  * İkinci geçiş (hires fix) ve yüz/el düzeltici: ikisi de yüklü modelin bileşenlerini paylaşan img2img
-    pipeline'ı kullanır (ek bellek yok). Algılama CPU'da OpenCV ile yapılır.
-  * v2 hazırlığı: stil veri setleri, yerel içe aktarma, kibar (tek bağlantı, 1 sn aralıklı) URL indirme.
-
-Bu modül içe aktarılırken yalnızca standart kütüphane kullanır; requests, torch, diffusers
-gibi paketler ihtiyaç anında içe aktarılır.
-"""
+# Çekirdek modül (arayüzden bağımsız). Import anında yalnızca standart kütüphane; torch/diffusers vb.
+# ihtiyaç anında içe aktarılır.
 import os
 import sys
 import json
@@ -72,11 +54,72 @@ HF_NOISE_FILTER = _HfNoiseFilter()
 for _name in ("huggingface_hub.utils._http", "huggingface_hub.file_download", "huggingface_hub"):
     _logging.getLogger(_name).addFilter(HF_NOISE_FILTER)
 
-# pythonw / pencereli exe'de stdout/stderr None olur; tqdm vb. çökmesin.
-if sys.stdout is None:
-    sys.stdout = open(os.devnull, "w", encoding="utf-8")
-if sys.stderr is None:
-    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+# Konsol tanıtıcısı sorunları (TÜM program için tek merkezden çözüm):
+# pythonw / pencereli exe'de ya da bozuk bir tanıtıcıda stdout/stderr'e yazmak programı çökertir —
+# None ise AttributeError, geçersiz tanıtıcı ise 'OSError [Errno 22] Invalid argument' (ör. diffusers model
+# yüklerken tqdm'in \r yazması). Aşağıdaki sarmalayıcı her iki durumu da yutar. ails_core her programın (Image
+# Studio, Dataset Studio, PRO çocuk süreçleri) EN ERKEN import ettiği modül olduğundan, bu düzeltme ağır
+# kütüphaneler yüklenmeden önce, tek noktadan devreye girer.
+class _SafeStream:
+    """stdout/stderr yerine geçer; write/flush hatalarını sessizce yutar."""
+    def __init__(self, fp):
+        self._fp = fp
+
+    def write(self, s):
+        try:
+            if self._fp is not None:
+                return self._fp.write(s)
+        except Exception:
+            pass
+        try:
+            return len(s)
+        except Exception:
+            return 0
+
+    def flush(self):
+        try:
+            if self._fp is not None:
+                self._fp.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        if self._fp is not None and hasattr(self._fp, "fileno"):
+            return self._fp.fileno()
+        raise OSError("no fileno")
+
+    def __getattr__(self, n):
+        try:
+            return getattr(self._fp, n)
+        except Exception:
+            return lambda *a, **k: None
+
+
+def harden_std_streams():
+    """sys.stdout/sys.stderr None ise veya yazması hata veriyorsa güvenli bir sarmalayıcıyla değiştirir.
+    Idempotent; birden çok kez çağrılabilir."""
+    for name in ("stdout", "stderr"):
+        fp = getattr(sys, name, None)
+        if isinstance(fp, _SafeStream):
+            continue
+        broken = fp is None
+        if not broken:
+            try:
+                fp.write(""); fp.flush()
+            except Exception:
+                broken = True
+        if broken:
+            try:
+                fp = open(os.devnull, "w", encoding="utf-8")
+            except Exception:
+                fp = None
+        setattr(sys, name, _SafeStream(fp))
+
+
+harden_std_streams()
 
 IS_WIN = os.name == "nt"
 GB = 1024 ** 3
@@ -376,7 +419,7 @@ def _query_nvidia_smi():
                    ["name", "memory.total", "driver_version"], ["name", "memory.total"]):
         try:
             out = subprocess.run([exe, "--query-gpu=" + ",".join(fields), "--format=csv,noheader,nounits"],
-                                 capture_output=True, text=True, timeout=15, **no_window_kwargs())
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, **no_window_kwargs())
             if out.returncode != 0:
                 continue
             gpus = []
@@ -1089,7 +1132,7 @@ def venv_ok(paths):
         return False
     try:
         r = subprocess.run([paths.venv_python, "-c", "import sys, pip; print(sys.version_info[0])"],
-                           capture_output=True, text=True, timeout=120, env=sub_env(paths), **no_window_kwargs())
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=sub_env(paths), **no_window_kwargs())
         return r.returncode == 0
     except Exception:
         return False
@@ -1102,7 +1145,7 @@ def create_venv(paths, log_cb=None, python_exe=None):
     shutil.rmtree(paths.venv, ignore_errors=True)
     os.makedirs(paths.runtime, exist_ok=True)
     setup_log(paths, "venv: %s -m venv %s" % (py, paths.venv))
-    r = subprocess.run([py, "-m", "venv", paths.venv], capture_output=True, text=True, timeout=900,
+    r = subprocess.run([py, "-m", "venv", paths.venv], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
                        env=sub_env(paths), **no_window_kwargs())
     if r.returncode != 0 or not os.path.exists(paths.venv_python):
         detail = (r.stderr or r.stdout or "").strip()[-600:]
@@ -1111,7 +1154,7 @@ def create_venv(paths, log_cb=None, python_exe=None):
             raise RuntimeError("NO_VENV: " + detail)
         raise RuntimeError(detail or "venv creation failed")
     if not venv_ok(paths):
-        r2 = subprocess.run([paths.venv_python, "-m", "ensurepip", "--upgrade"], capture_output=True, text=True,
+        r2 = subprocess.run([paths.venv_python, "-m", "ensurepip", "--upgrade"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                             timeout=600, env=sub_env(paths), **no_window_kwargs())
         if not venv_ok(paths):
             setup_log(paths, "ensurepip failed:\n" + (r2.stderr or "") + (r2.stdout or ""))
@@ -1127,7 +1170,7 @@ def missing_basic(paths):
     code = ("import importlib.util as u, json; "
             "print(json.dumps([m for m in %r if u.find_spec(m) is None]))" % (list(BASIC_MODULES),))
     try:
-        r = subprocess.run([paths.venv_python, "-c", code], capture_output=True, text=True, timeout=120,
+        r = subprocess.run([paths.venv_python, "-c", code], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
                            env=sub_env(paths), **no_window_kwargs())
         mods = json.loads(r.stdout.strip().splitlines()[-1])
         return [BASIC_MODULES[m] for m in mods]
@@ -1903,7 +1946,7 @@ def legacy_user_site_torch():
         return None
     py = base_python() or sys.executable
     try:
-        r = subprocess.run([py, "-c", "import torch"], capture_output=True, text=True, timeout=300,
+        r = subprocess.run([py, "-c", "import torch"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
                            env=sub_env(drop_ours=True), **no_window_kwargs())
         if r.returncode == 0:
             return None          # çalışan bir torch: başka bir program kullanıyor olabilir, dokunma
@@ -3662,6 +3705,18 @@ class ImageEngine:
             try:
                 import diffusers
                 from diffusers import DiffusionPipeline
+                # diffusers'ın KENDİ ilerleme çubuğu (model bileşenlerini yüklerken) ayrı bir tqdm; konsolsuz
+                # çalışmada geçersiz stdout'a yazınca 'OSError 22' ile çökertiyordu. Kapat (HF_HUB env'i yalnızca
+                # indirme çubuğunu kapatır, bunu değil).
+                try:
+                    diffusers.utils.logging.disable_progress_bar()
+                except Exception:
+                    pass
+                try:
+                    import transformers
+                    transformers.utils.logging.disable_progress_bar()
+                except Exception:
+                    pass
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException as e:  # noqa

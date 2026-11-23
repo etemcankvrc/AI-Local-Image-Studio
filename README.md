@@ -6,7 +6,7 @@ your own language into English prompts. The interface is available in **English,
 
 > 🇹🇷 Ayrıntılı Türkçe kılavuz ve sürüm notları: **[BENIOKU.md](BENIOKU.md)**
 
-**Current version: 1.8.1**
+**Current version: 1.8.4**
 
 ### 💛 PRO build on Patreon
 

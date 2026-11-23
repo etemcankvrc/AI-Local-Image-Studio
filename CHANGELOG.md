@@ -5,6 +5,16 @@ All notable changes to AI Local Image Studio are listed here. This repository is
 supporters adds separate advanced tools — image→video + video LoRA training, a standalone editor/retouch tool, a
 batch upscaler, and **Dataset Studio** — at **[patreon.com/GTEtemcan](https://www.patreon.com/GTEtemcan)**.
 
+## 1.8.2 – 1.8.4
+
+- **Fixed a crash when loading a model (`OSError [Errno 22]`)** on console-less (windowed) launches: the image/text
+  libraries could write their progress bars to an invalid console handle and bring the program down. Standard
+  output/error are now hardened at the earliest point for every process, and model-load progress bars are disabled,
+  so loading a model to generate or train no longer crashes.
+- A few helper sub-processes now decode their output as UTF-8, avoiding rare errors on non-UTF-8 Windows locales.
+- Internal: removed long top-of-file description blocks from the source (kept short section comments); the version
+  lives only in `APP_VERSION`.
+
 ## 1.8.1
 
 - **LoRA delete fixed:** you can now delete LoRAs you added yourself too (not only the ones the program trained). The

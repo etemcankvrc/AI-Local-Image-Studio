@@ -1,15 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-AI Local Image Studio v1.1.0 — %100 yerel yapay zeka görsel oluşturucu.
-
-Görsel tarz AI Local Translator (SRT projesi) ile aynıdır.
-Çalıştırma:  python ai_local_image_studio.py
-
-Açılış sırası:
-  1) İlk açılışta kullanıcıya "Dosyalar nereye kaydedilsin?" diye sorulur (disklerin boş alanı gösterilir).
-  2) Program o klasörde kendi Python ortamını (runtime\\venv) kurar — genel Python'a hiçbir şey yazılmaz.
-  3) Arayüz bu ortamda açılır. Görsel motoru, modeller ve LLM'ler yalnızca kullanıcı onayıyla indirilir.
-"""
+# Giriş modülü: arayüz (Tkinter) + başlatma.
 import os
 import sys
 import json
@@ -25,7 +15,7 @@ import platform
 import importlib
 
 APP_NAME = "AI Local Image Studio"
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.8.4"
 
 
 def _app_dir():
@@ -73,14 +63,10 @@ def pro_module_for(item):
 
 
 def ensure_std_streams():
-    """Konsolsuz (windowed) exe'de sys.stdout/sys.stderr None'dur. Bunlara yazan herhangi bir kod (ör. bir
-    traceback yazdırma) programı sessizce çökertebilir. None olanları devnull'a yönlendirip çökmeyi önler."""
-    for name in ("stdout", "stderr"):
-        if getattr(sys, name, None) is None:
-            try:
-                setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
-            except Exception:
-                pass
+    """Konsol tanıtıcısı sorunlarının tek merkezden çözümü ails_core.harden_std_streams()'tedir (modül import
+    edilince çalışır). Bu, geri uyumluluk için ince bir sarmalayıcı; bazı yerler (dataset studio dâhil) bu adla
+    çağırıyor."""
+    core.harden_std_streams()
 
 
 class _ProNS:
@@ -1679,6 +1665,10 @@ def launcher_main():
     py = paths.venv_pythonw if use_w and os.path.exists(paths.venv_pythonw) else paths.venv_python
     env = os.environ.copy()
     env.update(paths.env())
+    # Not: çocuk süreç konsolsuz (pythonw) başlatılınca ebeveynin geçersiz stdout/stderr'ini miras alabilir;
+    # ama çocuk ilk iş olarak ails_core'u import ettiğinde core.harden_std_streams() devreye girip akışları
+    # güvenli sarmalayıcıya çevirir (ağır kütüphaneler/tqdm yazmadan ÖNCE). Bu yüzden burada ayrıca yönlendirme
+    # gerekmiyor — ve bu satır zırhlı paketleyici tarafından aynen değiştirildiği için sade tutulmalı.
     return subprocess.call([py, os.path.abspath(__file__), "--ails-child"], env=env, cwd=APP_DIR)
 
 
@@ -6987,7 +6977,9 @@ class ImageStudio:
         py = py or core.base_python() or sys.executable
         env = core.sub_env(drop_ours=True)
         try:
-            subprocess.Popen([py, SCRIPT_PATH, "--wait-pid", str(os.getpid())], cwd=APP_DIR, env=env)
+            subprocess.Popen([py, SCRIPT_PATH, "--wait-pid", str(os.getpid())], cwd=APP_DIR, env=env,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             **core.no_window_kwargs())
         except Exception as e:
             self.log(friendly_error(e))
             return
