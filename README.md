@@ -4,7 +4,8 @@
 
 > 🇹🇷 Ayrıntılı Türkçe kılavuz ve sürüm notları: **[BENIOKU.md](BENIOKU.md)**
 
-<!-- TODO: Buraya arayüzün + örnek çıktının ekran görüntüsünü ekle: ![AI Local Image Studio](docs/screenshot.png) -->
+<img width="2560" height="1392" alt="image" src="https://github.com/user-attachments/assets/3ee340d2-f65d-4758-85c0-7675acd7e250" />
+
 
 ---
 
