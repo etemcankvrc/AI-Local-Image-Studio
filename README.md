@@ -17,6 +17,8 @@
 - **Face & hand fixer:** Detects faces and hands (YuNet, MediaPipe palm, anime faces) and redraws them sharper.
 - **Local prompt writer (Ollama):** Uses a local Ollama model (Qwen3, etc. — locally or over LAN) to write English prompts and settings, then unloads itself so the image model gets the VRAM. Translates faithfully without adding details you didn't ask for, validates nationality/details, and trims overly long prompts.
 
+<img width="1310" height="1161" alt="image" src="https://github.com/user-attachments/assets/58ffe616-83bd-46d1-814f-73f236f5c3f3" />
+
 ### 🧠 Built-in LoRA Training & Dataset Tools
 - **Dataset creation:** Build datasets from folders, images, and **videos** (automatically picks sharp, varied frames), or optionally from openly licensed images (Openverse). Files are cleanly renamed after the dataset (`istanbul_street_0001.jpg`).
 - **Auto-captioning:** Images without descriptions are captioned automatically via **Florence-2**.
@@ -28,9 +30,13 @@
   - **RAM-assisted training (block swapping):** If your GPU is smaller than the full-speed requirement (e.g., FLUX.2 on 4 GB VRAM), weights stay in system RAM and swap to the GPU piece by piece. Slower, but works with **≥ 3.5 GB VRAM** and enough RAM (**SDXL:** 16 GB, **FLUX.2:** 24 GB, **Z-Image:** 28 GB). Out-of-memory errors automatically retry at a lower resolution.
   - **Large datasets & self-learning:** Supports thousands of images (caches prepared data to disk when RAM is full and cleans up afterward) and includes **Diffusion-DPO** self-learning (SD 1.5) from 👍 / 👎 ratings.
 
+<img width="875" height="620" alt="image" src="https://github.com/user-attachments/assets/404d34dd-d07d-48af-a742-abc56c9fea1b" />
+
 ### 📦 Custom Models & LoRA Management
 - **Bring your own models:** Drop single-file SD 1.5 or SDXL `.safetensors` models (e.g., from Civitai or Hugging Face) into `addons\models\` to see them in the model list (📦). The app never downloads third-party checkpoints and refuses `.ckpt` / `.pt` files for safety. First-time use needs either the matching built-in model or a ~4 MB config pack (no weights, asked first). Model licenses are your responsibility.
 - **LoRA picker:** Lists LoRAs from `addons\` alongside your trained LoRAs with search, weight sliders, and compatibility checks. Deleted LoRAs move safely to `loras\.trash` without overwriting existing files.
+
+<img width="641" height="474" alt="image" src="https://github.com/user-attachments/assets/40dcac7c-1a13-4589-b048-68dab5124f40" />
 
 ### 🌐 Local Network Image Server (LAN API)
 Use one PC's GPU and models from other devices on your network (like Ollama, but for images). Enable via **Section 4 → 🌐 Network server…** (off by default):
