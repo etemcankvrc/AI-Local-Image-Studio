@@ -1,128 +1,115 @@
 # 🎨 AI Local Image Studio (Open Source)
 
-**100% local AI image generator with built-in LoRA training.** Generate images with Stable Diffusion 1.5 / SDXL,
-Z-Image-Turbo and FLUX.2 [klein] on your own PC — no cloud, no API keys. A local LLM (Ollama) turns what you type in
-your own language into English prompts. The interface is available in **English, Türkçe, 한국어 and Deutsch**.
+**100% local AI image generator with built-in LoRA training.** Generate images with Stable Diffusion 1.5, SDXL, Z-Image-Turbo, and FLUX.2 [klein] on your own PC — no cloud, no API keys. A local LLM (Ollama) translates prompts from your own language into English. The interface is available in **English, Türkçe, 한국어, and Deutsch**.
 
 > 🇹🇷 Ayrıntılı Türkçe kılavuz ve sürüm notları: **[BENIOKU.md](BENIOKU.md)**
 
+<!-- TODO: Buraya arayüzün + örnek çıktının ekran görüntüsünü ekle: ![AI Local Image Studio](docs/screenshot.png) -->
 
+---
 
 ## ✨ Features
 
-- **Image generation:** SD 1.5, SDXL 1.0, Z-Image-Turbo, FLUX.2 [klein] 4B — quality presets, samplers, hires fix,
-  aspect ratios, seed control, 2× upscaling (Real-ESRGAN).
-- **Runs on modest hardware:** memory guard with GPU / low-VRAM / CPU profiles; when VRAM runs out it slows down instead
-  of crashing (designed to run on a 4 GB GPU with 32 GB RAM).
-- **Face & hand fixer:** finds faces and hands (YuNet, MediaPipe palm, anime faces) and redraws them sharper.
-- **Prompt writer:** a local Ollama model (Qwen3 etc.) writes the English prompt and settings, then unloads itself so
-  the image model gets the VRAM. Ollama on another PC in your LAN can be used too. It translates faithfully — it keeps
-  nationality, count, colors and clothing, adds nothing you didn't say, and a short request gives a short prompt. The
-  program checks the result: a swapped or invented nationality is corrected, and over-long prompts are cleaned up.
-- **Training window:**
-  - Build datasets from folders, files and **videos** (sharp, varied frames are picked automatically) or, if you allow
-    it, from openly licensed images (Openverse). Files are named after the dataset (`istanbul_street_0001.jpg`).
-  - Images without a description are **captioned automatically** (Florence-2).
-  - **Collage / split-screen check:** images that contain several pictures (collages, split-screen video frames)
-    are detected and shown with the planned cuts. One click **cuts them into separate images** (one picture → several
-    training images; separator bands are trimmed, nested layouts are handled), or leave them out / keep them.
-    Originals are moved to the dataset's `excluded` folder, never deleted.
-  - Choose **what to teach**: 🎨 style, 🏙️ place / city, 🧸 subject / object / character, 🧍 human anatomy / pose,
-    👤 face. Each type trains differently. In *place* mode faces are blurred and not learned, so the surroundings
-    come first; in *face* mode only the face is learned.
-  - **Light** mode saves a word card; **deep** mode trains a LoRA on the model you choose: **SD 1.5** (4 GB VRAM or
-    CPU), **SDXL** (≥ 10 GB), **FLUX.2 [klein] 4B** (≥ 12 GB; trained on the Apache-2.0 *klein base 4B*, used with
-    the fast model) or **Z-Image** (≥ 16 GB; trained on the Apache-2.0 *Z-Image base*, used with Z-Image-Turbo).
-    If the card is too small for full speed (e.g. FLUX.2 on 4 GB), training runs **RAM-assisted** (block swapping:
-    weights stay in RAM and are moved to the GPU piece by piece) — slower, but it works with ≥ 3.5 GB VRAM and enough
-    RAM (SDXL 16 GB, FLUX.2 24 GB, Z-Image 28 GB). Otherwise the choice is marked and never started;
-    out-of-memory retries at a lower resolution.
-    **Self-learning** learns from your 👍 / 👎 ratings and an automatic judge (Diffusion-DPO, SD 1.5).
-    Every image of the dataset is used — thousands are fine: when the prepared data does not fit in RAM it is
-    cached on the data drive and removed when training ends.
-- **Your own models:** drop a single-file SD 1.5 or SDXL model (`.safetensors`, e.g. from Civitai or Hugging Face)
-  into `addons\models\` and it appears in the model list as 📦. The program never downloads them; `.ckpt` / `.pt`
-  files are never opened (they can contain code). The first time, it needs either the matching built-in model or a
-  ~4 MB settings pack (no weights, asked first). Their licenses are your responsibility.
-- **LoRA picker:** LoRAs you drop into `addons\` plus the ones the program trains, with search, weights and
-  compatibility checks. Deleted LoRAs go to a trash folder, existing LoRAs are never overwritten.
-- **Image server on your network (like Ollama, but for images):** section 4 → **🌐 Network server…** lets other
-  devices use this PC's image models and LoRAs. Off by default.
-  - *This computer only* (127.0.0.1, no key; requests from web pages in a browser are refused) or *home / office
-    network* (LAN addresses only, access key required — also use this for apps running in Docker).
-  - Another copy of AI Local Image Studio uses it via **Image engine → ➕ Add a server on the network…**
-    (address `192.168.x.x:7860` + key). Nothing is downloaded or loaded on that PC; the prompt is still prepared
-    by its own LLM. Its own LoRAs are sent to the server **once**, checked, and stored in `addons\network\`
-    (only `.safetensors` LoRAs, never full models; can be switched off).
-  - **Compatible APIs:** Automatic1111 (`/sdapi/v1/txt2img`, LoRAs as `<lora:name:0.8>`) for Open WebUI,
-    SillyTavern, Krita plug-ins…, and OpenAI images (`/v1/images/generations`). The key works as a Bearer token or
-    as the password (any user name).
-  - Requests run one at a time with this PC's memory guard; while it is busy (e.g. training) they wait in line.
-    Images are also saved on the server in `outputs\network\`.
-  - Windows asks once for firewall permission: allow **private networks** only. Never forward the port to the
-    internet.
+### 🖼️ Image Generation & Low-VRAM Support
+- **Multiple engines:** SD 1.5, SDXL 1.0, Z-Image-Turbo, and FLUX.2 [klein] 4B — with quality presets, samplers, hires fix, aspect ratios, seed control, and 2× upscaling (Real-ESRGAN).
+- **Runs on modest hardware:** Built-in memory guard with GPU, low-VRAM, and CPU profiles. When VRAM runs out, it offloads and slows down instead of crashing (tested on a **4 GB VRAM laptop GPU + 32 GB RAM**).
+- **Face & hand fixer:** Detects faces and hands (YuNet, MediaPipe palm, anime faces) and redraws them sharper.
+- **Local prompt writer (Ollama):** Uses a local Ollama model (Qwen3, etc. — locally or over LAN) to write English prompts and settings, then unloads itself so the image model gets the VRAM. Translates faithfully without adding details you didn't ask for, validates nationality/details, and trims overly long prompts.
 
-## 🆕 What's new in 1.8.1
+### 🧠 Built-in LoRA Training & Dataset Tools
+- **Dataset creation:** Build datasets from folders, images, and **videos** (automatically picks sharp, varied frames), or optionally from openly licensed images (Openverse). Files are cleanly renamed after the dataset (`istanbul_street_0001.jpg`).
+- **Auto-captioning:** Images without descriptions are captioned automatically via **Florence-2**.
+- **Collage / split-screen splitter:** Detects multi-panel collages or split-screen video frames, previews cut lines, and splits them into separate training images in one click (trims separator bands, handles nested layouts). Originals are moved to the dataset's `excluded` folder, never deleted.
+- **Dedicated teach modes:** Choose what to train — 🎨 **style**, 🏙️ **place / city** (blurs faces so surroundings come first), 🧸 **subject / object / character**, 🧍 **human anatomy / pose**, or 👤 **face** (learns only the face).
+- **Light & Deep training modes:**
+  - **Light mode** saves a word card.
+  - **Deep mode** trains a LoRA on **SD 1.5** (4 GB VRAM or CPU), **SDXL** (≥ 10 GB), **FLUX.2 [klein] 4B** (≥ 12 GB; trained on Apache-2.0 *klein base 4B*), or **Z-Image** (≥ 16 GB; trained on Apache-2.0 *Z-Image base*).
+  - **RAM-assisted training (block swapping):** If your GPU is smaller than the full-speed requirement (e.g., FLUX.2 on 4 GB VRAM), weights stay in system RAM and swap to the GPU piece by piece. Slower, but works with **≥ 3.5 GB VRAM** and enough RAM (**SDXL:** 16 GB, **FLUX.2:** 24 GB, **Z-Image:** 28 GB). Out-of-memory errors automatically retry at a lower resolution.
+  - **Large datasets & self-learning:** Supports thousands of images (caches prepared data to disk when RAM is full and cleans up afterward) and includes **Diffusion-DPO** self-learning (SD 1.5) from 👍 / 👎 ratings.
 
-- **LoRA delete fixed:** you can now delete LoRAs you added yourself too (not only the ones the program trained). The
-  file is released before deleting and the move is retried, so a LoRA that is still loaded no longer blocks deletion.
-  Deleted LoRAs still go to `loras\.trash`, never overwritten.
-- **Training window — live preview:** the latest sample image now shows right in the training panel, with a
-  **"next sample in ~X"** countdown so you can see when the next preview is coming.
-- **Character-LoRA training:** when a caption already starts with the trigger word, the trigger is no longer added a
-  second time (no more `trigger, trigger woman …` duplication).
-- **More stable builds:** windows (training, network, etc.) open reliably; an unexpected error now shows a message
-  instead of closing the program, and is written to `logs\gui_errors.log`.
+### 📦 Custom Models & LoRA Management
+- **Bring your own models:** Drop single-file SD 1.5 or SDXL `.safetensors` models (e.g., from Civitai or Hugging Face) into `addons\models\` to see them in the model list (📦). The app never downloads third-party checkpoints and refuses `.ckpt` / `.pt` files for safety. First-time use needs either the matching built-in model or a ~4 MB config pack (no weights, asked first). Model licenses are your responsibility.
+- **LoRA picker:** Lists LoRAs from `addons\` alongside your trained LoRAs with search, weight sliders, and compatibility checks. Deleted LoRAs move safely to `loras\.trash` without overwriting existing files.
+
+### 🌐 Local Network Image Server (LAN API)
+Use one PC's GPU and models from other devices on your network (like Ollama, but for images). Enable via **Section 4 → 🌐 Network server…** (off by default):
+- **Access modes:** *This computer only* (`127.0.0.1`, no key, browser requests blocked) or *Home / office network* (LAN only, access key required — also suitable for Docker apps).
+- **Multi-PC Studio sync:** Another copy of AI Local Image Studio can connect via **Image engine → ➕ Add a server on the network…** (`192.168.x.x:7860` + key). The client needs no local image weights; prompts are still prepared locally, and `.safetensors` LoRAs are uploaded once to `addons\network\` (can be toggled off).
+- **Compatible APIs:** Supports **Automatic1111** (`/sdapi/v1/txt2img`, `<lora:name:0.8>`) for Open WebUI, SillyTavern, and Krita plugins, plus **OpenAI Images** (`/v1/images/generations`). The access key works as a Bearer token or HTTP password.
+- **Safe queueing:** Requests run one at a time through the memory guard and wait in line while training is active. Outputs are also saved in `outputs\network\`.
+- **Firewall note:** Allow **private networks only** when Windows prompts. Never port-forward this server to the public internet.
+
+---
+
+## 🆕 Recent Updates
+
+- **Fixed LoRA deletion:** You can now delete user-added LoRAs as well as trained ones. Loaded files are released before moving to `loras\.trash` so active LoRAs no longer block deletion.
+- **Live training preview:** The training panel now displays the latest sample image with a **"next sample in ~X"** countdown.
+- **Character-LoRA captions:** Trigger words are no longer duplicated when a caption already starts with the trigger word.
+- **Stability improvements:** Auxiliary windows (training, network, etc.) open reliably, and unexpected errors display a dialog and log to `logs\gui_errors.log` instead of crashing silently.
+
+---
 
 ## 📦 Requirements
 
-- **Windows 10/11 (64-bit).** An NVIDIA GPU is recommended; it also works on CPU (slowly).
-- **Any Python 3.10+** just to start the program (python.org or Microsoft Store).
-- On first start the program asks for a **data folder** and sets up its own environment there. It can also install
-  its **own Python 3.12** there (recommended, ~45 MB via `uv`), so the Python installed on your computer doesn't
-  matter. Nothing is installed into your system Python, and nothing large is downloaded without your confirmation.
+- **OS:** Windows 10 / 11 (64-bit).
+- **Hardware:** An NVIDIA GPU is recommended (4 GB+ VRAM with 24–32 GB system RAM for FLUX.2); CPU mode is also supported (slower).
+- **Python (only if running from source):** Any Python 3.10+ to launch. The standalone Windows Setup build does **not** require Python.
+- **Self-contained environment:** On first start, the app asks for a **data folder** and creates its own isolated environment there (optionally installing its own ~45 MB Python 3.12 via `uv`). Nothing is installed into your system Python, and no large files are downloaded without confirmation.
 
-## 🚀 Install & run — which file to run
+---
 
-**Just want to use it (Windows, no Python needed):** open the **[Releases](../../releases)** page and download the
-latest **FREE** build, then:
+## 🚀 Install & Run
 
-- **Setup** (`AI_Local_Image_Studio_…_Setup.exe`) → run it once to unpack/install, then launch
-  **`AI_Local_Image_Studio.exe`**.
-- **Full** (`…_FULL.zip`) → extract it anywhere, then run **`AI_Local_Image_Studio.exe`** inside the folder.
+### Option 1: Windows Standalone (No Python needed)
+Download the latest **FREE** release from the **[Releases](https://github.com/etemcankvrc/AI-Local-Image-Studio/releases)** page:
+- **Setup (`AI_Local_Image_Studio_…_Setup.exe`):** Run once to install, then launch **`AI_Local_Image_Studio.exe`**.
+- **Portable ZIP (if provided):** Extract anywhere and run **`AI_Local_Image_Studio.exe`** inside the folder (ignore the supporting files next to it).
 
-👉 The file you run is **`AI_Local_Image_Studio.exe`**. The other files next to it are its parts — don't run those.
+> **Windows SmartScreen note:** Because the Windows installer is unsigned, SmartScreen may show a warning on first run. If you prefer not to run prebuilt executables, you can inspect the code and run directly from source below.
 
-**From source** (any OS, Python 3.10+):
-
+### Option 2: Run from Source (Python 3.10+)
 ```bash
 python ai_local_image_studio.py
 ```
 
-On first start, either way:
-
-1. Choose the data folder (the drive with the most free space is suggested).
-2. When you generate your first image, the program lists what it needs to download (image engine, model, optional
-   LLM) with sizes and destination folder, and asks once.
+### First-Time Setup
+1. Choose a **data folder** (the drive with the most free space is suggested).
+2. On your first generation, the app lists required downloads (engine, model, optional LLM) with sizes and asks for confirmation once.
 3. Open **🧠 TRAINING / IMAGE ANALYSIS** to build datasets and train your own LoRAs.
 
-Everything the program downloads goes into the data folder:
-
-```
+All downloaded files stay inside your chosen data folder:
+```text
 <data folder>\
-  runtime\    program environment (PyTorch, diffusers…) and, if chosen, its own Python
-  models\     image models, upscaler, face/hand detectors, Florence-2
-  datasets\   your datasets (images, video frames, captions)
-  addons\     LoRAs you add yourself (the program never downloads add-ons)
-  addons\models\  full models you add yourself (single-file SD 1.5 / SDXL .safetensors)
-  loras\      LoRAs and word cards the program trained (deleted ones: loras\.trash)
-  outputs\    generated images
-  logs\       ails.log, setup.log
+  runtime\        isolated environment (PyTorch, diffusers…) and optional Python
+  models\         image models, upscaler, face/hand detectors, Florence-2
+  datasets\       your datasets (images, video frames, captions)
+  addons\         user-added LoRAs (never downloaded automatically)
+  addons\models\  user-added full models (single-file SD 1.5 / SDXL .safetensors)
+  loras\          trained LoRAs & word cards (deleted items: loras\.trash)
+  outputs\        generated images
+  logs\           ails.log, setup.log, gui_errors.log
 ```
+
+---
+
+## 💛 Support & Early-Access Builds (Optional)
+
+Everything in this repository — **image generation, prompt writer, RAM-assisted LoRA training (all teach modes), LoRA tools, and the LAN API server** — is free and open source.
+
+If you want to support development, supporters on Patreon get **early access** to separate experimental modules currently in active development (work in progress):
+- 🎬 **Image → Video** & **video LoRA training**
+- ✏️ Standalone **image editor / retouch** tool
+- 🔍 Standalone **batch upscaler**
+- 🧰 **Dataset Studio** (automated homogeneous character-LoRA dataset builder)
+
+👉 **[patreon.com/GTEtemcan](https://www.patreon.com/GTEtemcan)**
+
+---
 
 ## 📜 Licenses
 
-The source code in this folder is licensed under the **[Apache License 2.0](../LICENSE)**.
+The source code in this repository is licensed under the **[Apache License 2.0](./LICENSE)**.
 
 Models and third-party components are downloaded separately and keep their own licenses:
 
@@ -144,15 +131,12 @@ Models and third-party components are downloaded separately and keep their own l
 | PEFT | Apache-2.0 |
 | uv / CPython 3.12 (optional) | MIT or Apache-2.0 / PSF-2.0 |
 
-⚠️ The **use restrictions** of the OpenRAIL licenses (Attachment A) also apply to everyone who generates images with
-those models.
+⚠️ The **use restrictions** of the OpenRAIL licenses (Attachment A) apply to everyone who generates images with those models.
 
-At first start the program shows the model licenses and these use restrictions and asks you to accept them. All
-license texts are in the `LICENSES` folder (`LICENSES/THIRD_PARTY_NOTICES.md` lists every component, its license and
-source), and a copy is placed next to every downloaded model (`LICENSE_<name>.txt`).
+On first launch, the app displays model licenses and use restrictions for acceptance. Full license texts live in `LICENSES/` (`LICENSES/THIRD_PARTY_NOTICES.md`), and a copy is placed next to each downloaded model (`LICENSE_<name>.txt`).
 
-## 🤝 Responsible use
+---
 
-The *face* and *subject* training modes can learn what a person looks like. Use them only for yourself, people who
-agreed to it, or fictional characters — never to imitate real people without their consent. Only add images you have
-the right to use; add-on LoRAs you drop into `addons\` are your responsibility.
+## 🤝 Responsible Use
+
+The *face* and *subject* training modes can learn a person's likeness. Use them only for yourself, people who have given consent, or fictional characters — never to imitate real people without permission. Only use training images you have the right to use; third-party LoRAs placed in `addons\` are your responsibility.
