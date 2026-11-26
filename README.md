@@ -6,21 +6,7 @@ your own language into English prompts. The interface is available in **English,
 
 > 🇹🇷 Ayrıntılı Türkçe kılavuz ve sürüm notları: **[BENIOKU.md](BENIOKU.md)**
 
-**Current version: 1.8.7**
 
-### 💛 PRO build on Patreon
-
-This repository is free and fully usable on its own: **image generation, the prompt writer, LoRA training (all teach
-modes), the network server and the LoRA tools are all here and open source.** A one-click Windows **PRO** build for
-supporters adds separate advanced tools that are not part of this repository:
-
-- 🎬 **Image → video** and **video LoRA training**
-- ✏️ a standalone **image editor / retouch** tool
-- 🔍 a standalone **batch upscaling** tool
-- 🧰 **Dataset Studio** — a separate app that builds *homogeneous* character-LoRA datasets (detailed, consistent
-  captioning, smart video frame extraction, diversity/quality-balanced selection)
-
-👉 **[patreon.com/GTEtemcan](https://www.patreon.com/GTEtemcan)**
 
 ## ✨ Features
 
