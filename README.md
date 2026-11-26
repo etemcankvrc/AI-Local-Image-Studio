@@ -30,13 +30,14 @@
   - **RAM-assisted training (block swapping):** If your GPU is smaller than the full-speed requirement (e.g., FLUX.2 on 4 GB VRAM), weights stay in system RAM and swap to the GPU piece by piece. Slower, but works with **≥ 3.5 GB VRAM** and enough RAM (**SDXL:** 16 GB, **FLUX.2:** 24 GB, **Z-Image:** 28 GB). Out-of-memory errors automatically retry at a lower resolution.
   - **Large datasets & self-learning:** Supports thousands of images (caches prepared data to disk when RAM is full and cleans up afterward) and includes **Diffusion-DPO** self-learning (SD 1.5) from 👍 / 👎 ratings.
 
-<img width="875" height="620" alt="image" src="https://github.com/user-attachments/assets/404d34dd-d07d-48af-a742-abc56c9fea1b" />
+<img width="875" height="620" alt="image" src="https://github.com/user-attachments/assets/df178325-ec90-4d57-a1bb-20ff4799535b" />
+
 
 ### 📦 Custom Models & LoRA Management
 - **Bring your own models:** Drop single-file SD 1.5 or SDXL `.safetensors` models (e.g., from Civitai or Hugging Face) into `addons\models\` to see them in the model list (📦). The app never downloads third-party checkpoints and refuses `.ckpt` / `.pt` files for safety. First-time use needs either the matching built-in model or a ~4 MB config pack (no weights, asked first). Model licenses are your responsibility.
 - **LoRA picker:** Lists LoRAs from `addons\` alongside your trained LoRAs with search, weight sliders, and compatibility checks. Deleted LoRAs move safely to `loras\.trash` without overwriting existing files.
 
-<img width="641" height="474" alt="image" src="https://github.com/user-attachments/assets/40dcac7c-1a13-4589-b048-68dab5124f40" />
+<img width="641" height="474" alt="image" src="https://github.com/user-attachments/assets/ed060cdc-fdfe-43e8-becc-cb23babe91bb" />
 
 ### 🌐 Local Network Image Server (LAN API)
 Use one PC's GPU and models from other devices on your network (like Ollama, but for images). Enable via **Section 4 → 🌐 Network server…** (off by default):
